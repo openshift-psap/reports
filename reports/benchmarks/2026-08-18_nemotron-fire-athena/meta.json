@@ -1,0 +1,16 @@
+{
+  "title": "Nemotron-3-Super — H200 Profiling",
+  "description": "Flamegraphs and memory profiles for Nemotron-3-Super-120B MoE inference on fire-athena. Internal performance data.",
+  "tags": [
+    "nemotron",
+    "profiling",
+    "h200",
+    "moe"
+  ],
+  "date": "2026-08-18",
+  "author": "thameem",
+  "status": "draft",
+  "s3_key": "benchmarks/2026-08-18_nemotron-fire-athena/index.html",
+  "access": "authenticated",
+  "size": "8.3 MB"
+}

@@ -1,0 +1,52 @@
+name: Deploy PSAP Reports Site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Generate index.html and public reports manifest
+        run: python3 _generator/generate_index.py
+
+      - name: Upload manifests to S3
+        if: hashFiles('public-reports.json') != '' || hashFiles('private-entries.json') != ''
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          pip install -q awscli
+          BUCKET=$(python3 -c "import json; print(json.load(open('_generator/s3_config.json'))['bucket'])")
+          [ -f public-reports.json ] && aws s3 cp public-reports.json "s3://${BUCKET}/public-reports.json"
+          [ -f private-entries.json ] && aws s3 cp private-entries.json "s3://${BUCKET}/private-entries.json"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

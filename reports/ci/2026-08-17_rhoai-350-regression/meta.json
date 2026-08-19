@@ -1,0 +1,16 @@
+{
+  "title": "RHOAI 3.5.0 Regression Suite",
+  "description": "Allure HTML report — 847 tests, 14 failures across serving, training, and pipeline components.",
+  "tags": [
+    "rhoai",
+    "regression",
+    "allure",
+    "ci"
+  ],
+  "date": "2026-08-17",
+  "author": "ci-bot",
+  "status": "final",
+  "s3_key": "ci/2026-08-17_rhoai-350-regression/index.html",
+  "access": "public",
+  "size": "12.7 MB"
+}

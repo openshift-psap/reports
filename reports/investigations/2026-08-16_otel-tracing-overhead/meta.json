@@ -1,0 +1,16 @@
+{
+  "title": "OTel Tracing Overhead Analysis",
+  "description": "Measured impact of OpenTelemetry instrumentation on llm-d inference latency. Zero measurable overhead.",
+  "tags": [
+    "otel",
+    "tracing",
+    "llm-d",
+    "latency"
+  ],
+  "date": "2026-08-16",
+  "author": "thameem",
+  "status": "final",
+  "s3_key": "investigations/2026-08-16_otel-tracing-overhead/index.html",
+  "access": "public",
+  "size": "16 KB"
+}

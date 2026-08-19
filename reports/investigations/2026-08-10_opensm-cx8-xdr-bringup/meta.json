@@ -1,0 +1,16 @@
+{
+  "title": "OpenSM on ConnectX-8 — GB200 NVL4 Bring-Up",
+  "description": "Investigation into subnet manager behavior during InfiniBand fabric bring-up with CX8/XDR HCAs.",
+  "tags": [
+    "infiniband",
+    "opensm",
+    "gb200",
+    "cx8"
+  ],
+  "date": "2026-08-10",
+  "author": "thameem",
+  "status": "final",
+  "s3_key": "investigations/2026-08-10_opensm-cx8-xdr-bringup/index.html",
+  "access": "public",
+  "size": "18 KB"
+}

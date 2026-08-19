@@ -1,0 +1,16 @@
+{
+  "title": "GPU/NIC Topology Map — fire-athena",
+  "description": "Interactive topology visualization of GPU-NIC-switch fabric layout. Contains internal infrastructure data.",
+  "tags": [
+    "topology",
+    "gpu",
+    "fire-athena",
+    "infrastructure"
+  ],
+  "date": "2026-08-14",
+  "author": "thameem",
+  "status": "final",
+  "s3_key": "investigations/2026-08-14_cluster-topology-fire-athena/index.html",
+  "access": "authenticated",
+  "size": "5.1 MB"
+}
