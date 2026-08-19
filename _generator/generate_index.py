@@ -218,7 +218,13 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
     </div>
     <div class="filter-row" id="author-filter-row" style="display:none">
       <span class="filter-label">Submitter</span>
-      <div id="author-filters"></div>
+      <div id="author-filters" style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+        <div style="position:relative">
+          <input type="text" id="author-search" class="search-box" placeholder="Search submitters..." style="width:180px;font-size:0.75rem;padding:0.3rem 0.6rem" autocomplete="off">
+          <div id="author-suggestions" style="display:none;position:absolute;top:100%;left:0;z-index:50;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;margin-top:2px;max-height:160px;overflow-y:auto;min-width:180px;box-shadow:var(--shadow)"></div>
+        </div>
+        <div id="active-authors"></div>
+      </div>
     </div>
     <div class="filter-row">
       <span class="filter-label">Access</span>
@@ -252,12 +258,13 @@ const CF_DOMAIN = "__CLOUDFRONT_DOMAIN__";
 
 let activeCategory = null;
 let activeTags = new Set();
+let activeAuthors = new Set();
 let searchQuery = "";
 let sortBy = "date-desc";
 let statusFilter = null;
 let accessFilter = null;
-let authorFilter = null;
 let tagSearchBound = false;
+let authorSearchBound = false;
 
 function getCategories() { return [...new Set(REPORTS.map(r => r.category))].sort(); }
 function getAllTags() { return [...new Set(REPORTS.flatMap(r => r.tags))].sort(); }
@@ -274,7 +281,7 @@ function init() {
 function rebuildFilters() {
   rebuildPillFilter("category-filters", getCategories(), activeCategory, v => { activeCategory = v; });
   rebuildTagSearch();
-  rebuildPillFilter("author-filters", getAllAuthors(), authorFilter, v => { authorFilter = v; }, "author-filter-row");
+  rebuildAuthorSearch();
   rebuildAccessFilter();
   rebuildPillFilter("status-filters", ["final", "draft"], statusFilter, v => { statusFilter = v; });
 }
@@ -298,7 +305,6 @@ function rebuildPillFilter(containerId, values, activeValue, setter, hideRowId) 
 
 function rebuildPillStates() {
   rebuildPillFilter("category-filters", getCategories(), activeCategory, v => { activeCategory = v; });
-  rebuildPillFilter("author-filters", getAllAuthors(), authorFilter, v => { authorFilter = v; }, "author-filter-row");
   rebuildAccessFilter();
   rebuildPillFilter("status-filters", ["final", "draft"], statusFilter, v => { statusFilter = v; });
 }
@@ -359,6 +365,46 @@ function rebuildTagSearch() {
   document.addEventListener("click", e => { if (!e.target.closest("#tag-filters")) suggestions.style.display = "none"; });
 }
 
+function rebuildAuthorSearch() {
+  const allAuthors = getAllAuthors();
+  const row = document.getElementById("author-filter-row");
+  row.style.display = allAuthors.length ? "" : "none";
+  if (!allAuthors.length) return;
+  if (authorSearchBound) return;
+  authorSearchBound = true;
+  const input = document.getElementById("author-search");
+  const suggestions = document.getElementById("author-suggestions");
+  let highlightIdx = -1;
+  function showSuggestions(query) {
+    const authors = getAllAuthors();
+    const matches = authors.filter(a => !activeAuthors.has(a) && a.toLowerCase().includes(query.toLowerCase()));
+    if (!matches.length || !query) { suggestions.style.display = "none"; highlightIdx = -1; return; }
+    suggestions.innerHTML = matches.map(a => `<div class="tag-suggestion" data-author="${escHtml(a)}">${escHtml(a)}</div>`).join("");
+    suggestions.style.display = "block"; highlightIdx = -1;
+    suggestions.querySelectorAll(".tag-suggestion").forEach(el => { el.addEventListener("click", () => { addAuthor(el.dataset.author); }); });
+  }
+  function addAuthor(author) { activeAuthors.add(author); input.value = ""; suggestions.style.display = "none"; renderActiveAuthors(); render(); }
+  window.renderActiveAuthors = function() {
+    const container = document.getElementById("active-authors"); container.innerHTML = "";
+    activeAuthors.forEach(author => {
+      const chip = document.createElement("span"); chip.className = "active-tag";
+      chip.innerHTML = `${escHtml(author)}<span class="x">&times;</span>`;
+      chip.addEventListener("click", () => { activeAuthors.delete(author); renderActiveAuthors(); render(); });
+      container.appendChild(chip);
+    });
+  };
+  input.addEventListener("input", () => showSuggestions(input.value));
+  input.addEventListener("keydown", e => {
+    const items = suggestions.querySelectorAll(".tag-suggestion");
+    if (e.key === "ArrowDown") { e.preventDefault(); highlightIdx = Math.min(highlightIdx + 1, items.length - 1); items.forEach((el, i) => el.classList.toggle("highlighted", i === highlightIdx)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); highlightIdx = Math.max(highlightIdx - 1, 0); items.forEach((el, i) => el.classList.toggle("highlighted", i === highlightIdx)); }
+    else if (e.key === "Enter" && highlightIdx >= 0 && items[highlightIdx]) { e.preventDefault(); addAuthor(items[highlightIdx].dataset.author); }
+    else if (e.key === "Escape") { suggestions.style.display = "none"; }
+  });
+  input.addEventListener("focus", () => { if (input.value) showSuggestions(input.value); });
+  document.addEventListener("click", e => { if (!e.target.closest("#author-filters")) suggestions.style.display = "none"; });
+}
+
 async function loadPrivateEntries() {
   if (!CF_DOMAIN) return;
   try {
@@ -385,7 +431,7 @@ function filterReports() {
     if (activeCategory && r.category !== activeCategory) return false;
     if (activeTags.size > 0 && !r.tags.some(t => activeTags.has(t))) return false;
     if (statusFilter && r.status !== statusFilter) return false;
-    if (authorFilter && r.author !== authorFilter) return false;
+    if (activeAuthors.size > 0 && !activeAuthors.has(r.author)) return false;
     if (accessFilter === "public" && r.authenticated) return false;
     if (accessFilter === "authenticated" && !r.authenticated) return false;
     if (searchQuery) {
