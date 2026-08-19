@@ -25,6 +25,10 @@ cp "$LAMBDA_DIR/index.js" "$WORK_DIR/index.js"
 sed -i "s|__GITHUB_CLIENT_ID__|$GITHUB_CLIENT_ID|g" "$WORK_DIR/index.js"
 sed -i "s|__GITHUB_CLIENT_SECRET__|$GITHUB_CLIENT_SECRET|g" "$WORK_DIR/index.js"
 sed -i "s|__COOKIE_SECRET__|$COOKIE_SECRET|g" "$WORK_DIR/index.js"
+S3_BUCKET=$(python3 -c "import json; print(json.load(open('_generator/s3_config.json'))['bucket'])")
+S3_REGION=$(python3 -c "import json; print(json.load(open('_generator/s3_config.json'))['region'])")
+sed -i "s|__S3_BUCKET__|$S3_BUCKET|g" "$WORK_DIR/index.js"
+sed -i "s|__S3_REGION__|$S3_REGION|g" "$WORK_DIR/index.js"
 (cd "$WORK_DIR" && zip -q function.zip index.js)
 echo "Packaged to $WORK_DIR/function.zip"
 
