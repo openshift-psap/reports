@@ -215,11 +215,17 @@ exports.handler = async (event) => {
       headers: { 'Authorization': `Bearer ${accessToken}`, 'User-Agent': 'psap-reports-auth', 'Accept': 'application/json' },
     });
 
-    if (orgRes.statusCode === 204) return setAuthCookie(params.state);
+    if (orgRes.statusCode === 204) {
+      console.log(JSON.stringify({ event: 'github_auth', method: 'org', user: username }));
+      return setAuthCookie(params.state);
+    }
 
     // Check allowlist
     const allowlist = await getAllowlist();
-    if (allowlist.users && allowlist.users.includes(username)) return setAuthCookie(params.state);
+    if (allowlist.users && allowlist.users.includes(username)) {
+      console.log(JSON.stringify({ event: 'github_auth', method: 'allowlist', user: username }));
+      return setAuthCookie(params.state);
+    }
 
     return loginPage(params.state, `Access denied: ${username} is not a member of ${CONFIG.requiredOrg} and not in the allowlist.`);
   }
@@ -234,6 +240,7 @@ exports.handler = async (event) => {
     const entry = tokensData.tokens && tokensData.tokens[submittedToken];
 
     if (entry && entry.active !== false) {
+      console.log(JSON.stringify({ event: 'token_auth', group: entry.group || 'everyone', path: returnPath }));
       return setAuthCookie(returnPath);
     }
     return loginPage(returnPath, 'Invalid or revoked access token.');

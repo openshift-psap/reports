@@ -111,11 +111,14 @@ def render_index(entries):
     s3_config = load_s3_config()
     cf_domain = s3_config["cloudfront_domain"] if s3_config else ""
 
+    token_api = s3_config.get("token_api_url", "") if s3_config else ""
+
     html = INDEX_TEMPLATE.replace("__ENTRIES_JSON__", json.dumps(public_entries, indent=2))
     html = html.replace("__GENERATED_AT__", generated_at)
     html = html.replace("__REPORT_COUNT__", str(len(entries)))
     html = html.replace("__REPO_URL__", repo_url)
     html = html.replace("__CLOUDFRONT_DOMAIN__", cf_domain)
+    html = html.replace("__TOKEN_API_URL__", token_api)
 
     OUTPUT_FILE.write_text(html)
     print(f"Generated {OUTPUT_FILE} with {len(public_entries)} public reports")
@@ -247,6 +250,27 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
   </div>
 
   <div class="cards" id="cards"></div>
+
+  <div id="admin-panel" style="display:none;margin-top:2rem;padding-top:1.5rem;border-top:2px solid var(--border)">
+    <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem">Access Token Admin</h2>
+    <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
+      <input type="text" id="token-group" class="search-box" placeholder="Group (e.g. sales, engineering)" style="width:200px;font-size:0.8rem;padding:0.4rem 0.6rem">
+      <input type="text" id="token-note" class="search-box" placeholder="Note" style="flex:1;min-width:150px;font-size:0.8rem;padding:0.4rem 0.6rem">
+      <button id="token-generate-btn" style="padding:0.4rem 1rem;background:#EE0000;color:#fff;border:none;border-radius:6px;font-size:0.8rem;font-weight:600;cursor:pointer">Generate Token</button>
+    </div>
+    <div id="token-result" style="display:none;background:#f0f0f0;border:1px solid #d2d2d2;border-radius:6px;padding:0.75rem 1rem;margin-bottom:1rem;font-family:monospace;font-size:0.8rem;word-break:break-all"></div>
+    <table id="token-table" style="width:100%;border-collapse:collapse;font-size:0.8rem">
+      <thead><tr style="border-bottom:2px solid var(--border)">
+        <th style="text-align:left;padding:0.4rem;font-size:0.7rem;text-transform:uppercase;color:var(--text-secondary)">Token</th>
+        <th style="text-align:left;padding:0.4rem;font-size:0.7rem;text-transform:uppercase;color:var(--text-secondary)">Group</th>
+        <th style="text-align:left;padding:0.4rem;font-size:0.7rem;text-transform:uppercase;color:var(--text-secondary)">Note</th>
+        <th style="text-align:left;padding:0.4rem;font-size:0.7rem;text-transform:uppercase;color:var(--text-secondary)">Created</th>
+        <th style="text-align:left;padding:0.4rem;font-size:0.7rem;text-transform:uppercase;color:var(--text-secondary)">Status</th>
+        <th style="padding:0.4rem"></th>
+      </tr></thead>
+      <tbody id="token-tbody"></tbody>
+    </table>
+  </div>
 
   <footer>Generated __GENERATED_AT__ &middot; __REPORT_COUNT__ reports indexed</footer>
 </div>
@@ -495,7 +519,72 @@ function escHtml(s) {
   return d.innerHTML;
 }
 
+const TOKEN_API = "__TOKEN_API_URL__";
+
+async function initAdmin() {
+  if (!TOKEN_API) return;
+  const panel = document.getElementById("admin-panel");
+  try {
+    const resp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
+    if (!resp.ok) return;
+    panel.style.display = "";
+    const data = await resp.json();
+    renderTokenTable(data.tokens);
+  } catch (e) { return; }
+
+  document.getElementById("token-generate-btn").addEventListener("click", async () => {
+    const group = document.getElementById("token-group").value.trim() || "everyone";
+    const note = document.getElementById("token-note").value.trim() || `${group} access`;
+    const btn = document.getElementById("token-generate-btn");
+    btn.disabled = true; btn.textContent = "Generating...";
+    try {
+      const resp = await fetch(`${TOKEN_API}/tokens`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ group, note }),
+      });
+      const data = await resp.json();
+      if (data.token) {
+        const result = document.getElementById("token-result");
+        result.style.display = "";
+        result.innerHTML = `<strong>New token (${escHtml(group)}):</strong><br>${escHtml(data.token)}<br><br><em>Copy and share with ${escHtml(group)} users. This is the only time it will be shown in full.</em>`;
+        document.getElementById("token-group").value = "";
+        document.getElementById("token-note").value = "";
+        const listResp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
+        const listData = await listResp.json();
+        renderTokenTable(listData.tokens);
+      }
+    } catch (e) { console.error(e); }
+    btn.disabled = false; btn.textContent = "Generate Token";
+  });
+}
+
+function renderTokenTable(tokens) {
+  const tbody = document.getElementById("token-tbody");
+  tbody.innerHTML = tokens.map(t => `<tr style="border-bottom:1px solid var(--border)">
+    <td style="padding:0.4rem;font-family:monospace">${escHtml(t.id)}</td>
+    <td style="padding:0.4rem">${escHtml(t.group)}</td>
+    <td style="padding:0.4rem">${escHtml(t.note)}</td>
+    <td style="padding:0.4rem">${escHtml(t.created)}</td>
+    <td style="padding:0.4rem"><span style="color:${t.active ? 'var(--badge-final)' : 'var(--badge-archived)'}">${t.active ? 'Active' : 'Revoked'}</span></td>
+    <td style="padding:0.4rem">${t.active ? `<button onclick="revokeToken('${escHtml(t.id)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer;color:var(--text-secondary)">Revoke</button>` : ''}</td>
+  </tr>`).join("");
+}
+
+async function revokeToken(prefix) {
+  if (!confirm(`Revoke token ${prefix}?`)) return;
+  await fetch(`${TOKEN_API}/tokens`, {
+    method: "DELETE", credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prefix }),
+  });
+  const resp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
+  const data = await resp.json();
+  renderTokenTable(data.tokens);
+}
+
 init();
+initAdmin();
 </script>
 </body>
 </html>
