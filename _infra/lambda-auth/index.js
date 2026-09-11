@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const https = require('https');
 const querystring = require('querystring');
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 
 const CONFIG = {
   clientId: '__GITHUB_CLIENT_ID__',
@@ -21,6 +22,7 @@ const CONFIG = {
 
 const CACHE = { tokens: null, tokensAt: 0, allowlist: null, allowlistAt: 0 };
 const CACHE_TTL = 60000;
+const s3 = new S3Client({ region: CONFIG.s3Region });
 
 function httpRequest(options, postData) {
   return new Promise((resolve, reject) => {
@@ -39,14 +41,17 @@ function httpRequest(options, postData) {
 }
 
 async function fetchS3Json(key) {
-  const res = await httpRequest({
-    hostname: `${CONFIG.s3Bucket}.s3.${CONFIG.s3Region}.amazonaws.com`,
-    path: `/${key}`,
-    method: 'GET',
-    headers: { 'Accept': 'application/json' },
-  });
-  if (res.statusCode === 200 && typeof res.body === 'object') return res.body;
-  return null;
+  try {
+    const res = await s3.send(new GetObjectCommand({ Bucket: CONFIG.s3Bucket, Key: key }));
+    return JSON.parse(await res.Body.transformToString());
+  } catch (error) {
+    console.log(JSON.stringify({ event: 'auth_data_read_failed', key, error: error.name }));
+    return null;
+  }
+}
+
+function tokenDigest(token) {
+  return `sha256:${crypto.createHash('sha256').update(token).digest('hex')}`;
 }
 
 async function getTokens() {
@@ -238,7 +243,7 @@ exports.handler = async (event) => {
     const returnPath = form.state || '/';
 
     const tokensData = await getTokens();
-    const entry = tokensData.tokens && tokensData.tokens[submittedToken];
+    const entry = tokensData.tokens && tokensData.tokens[tokenDigest(submittedToken)];
 
     if (entry && entry.active !== false) {
       console.log(JSON.stringify({ event: 'token_auth', group: entry.group || 'everyone', path: returnPath }));

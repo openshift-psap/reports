@@ -12,6 +12,14 @@ const TOKEN_LENGTH = 54;
 
 const s3 = new S3Client({ region: REGION });
 
+function tokenDigest(token) {
+  return `sha256:${crypto.createHash('sha256').update(token).digest('hex')}`;
+}
+
+function tokenPrefix(token, info) {
+  return info.prefix || token.substring(0, 20);
+}
+
 function verifyCookie(signed) {
   if (!signed || !COOKIE_SECRET) return false;
   const lastDot = signed.lastIndexOf('.');
@@ -88,7 +96,7 @@ exports.handler = async (event) => {
   if (method === 'GET' && path === '/tokens') {
     const data = await getTokens();
     const redacted = Object.entries(data.tokens).map(([token, info]) => ({
-      id: token.substring(0, 20) + '...',
+      id: tokenPrefix(token, info) + '...',
       group: info.group || 'everyone',
       note: info.note || '',
       created: info.created || '',
@@ -106,7 +114,8 @@ exports.handler = async (event) => {
 
     const token = TOKEN_PREFIX + crypto.randomBytes(TOKEN_LENGTH).toString('base64url').substring(0, TOKEN_LENGTH);
     const data = await getTokens();
-    data.tokens[token] = {
+    data.tokens[tokenDigest(token)] = {
+      prefix: token.substring(0, 20),
       created: new Date().toISOString().split('T')[0],
       group,
       note,
@@ -127,7 +136,7 @@ exports.handler = async (event) => {
     const data = await getTokens();
     let revoked = 0;
     for (const [token, info] of Object.entries(data.tokens)) {
-      if (token.startsWith(prefix) && info.active !== false) {
+      if (tokenPrefix(token, info).startsWith(prefix) && info.active !== false) {
         info.active = false;
         revoked++;
       }

@@ -21,7 +21,7 @@ trap "rm -rf $WORK_DIR" EXIT
 
 echo ""
 echo "=== Step 1: Package Lambda ==="
-cp "$LAMBDA_DIR/index.js" "$WORK_DIR/index.js"
+cp "$LAMBDA_DIR/index.js" "$LAMBDA_DIR/package.json" "$LAMBDA_DIR/package-lock.json" "$WORK_DIR/"
 sed -i "s|__GITHUB_CLIENT_ID__|$GITHUB_CLIENT_ID|g" "$WORK_DIR/index.js"
 sed -i "s|__GITHUB_CLIENT_SECRET__|$GITHUB_CLIENT_SECRET|g" "$WORK_DIR/index.js"
 sed -i "s|__COOKIE_SECRET__|$COOKIE_SECRET|g" "$WORK_DIR/index.js"
@@ -29,7 +29,7 @@ S3_BUCKET=$(python3 -c "import json; print(json.load(open('_generator/s3_config.
 S3_REGION=$(python3 -c "import json; print(json.load(open('_generator/s3_config.json'))['region'])")
 sed -i "s|__S3_BUCKET__|$S3_BUCKET|g" "$WORK_DIR/index.js"
 sed -i "s|__S3_REGION__|$S3_REGION|g" "$WORK_DIR/index.js"
-(cd "$WORK_DIR" && zip -q function.zip index.js)
+(cd "$WORK_DIR" && npm ci --omit=dev --ignore-scripts && zip -qr function.zip index.js node_modules)
 echo "Packaged to $WORK_DIR/function.zip"
 
 echo ""
@@ -60,6 +60,12 @@ else
     echo "Waiting 10s for IAM propagation..."
     sleep 10
 fi
+
+echo "Granting the auth function read access to private auth data..."
+aws iam put-role-policy \
+    --role-name "$ROLE_NAME" \
+    --policy-name "psap-reports-auth-data-read" \
+    --policy-document "{\n+        \"Version\": \"2012-10-17\",\n+        \"Statement\": [{\n+            \"Effect\": \"Allow\",\n+            \"Action\": \"s3:GetObject\",\n+            \"Resource\": [\n+                \"arn:aws:s3:::$S3_BUCKET/tokens.json\",\n+                \"arn:aws:s3:::$S3_BUCKET/allowlist.json\"\n+            ]\n+        }]\n+    }"
 
 echo ""
 echo "=== Step 3: Create/Update Lambda Function ==="
