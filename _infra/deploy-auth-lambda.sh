@@ -10,9 +10,8 @@ DIST_ID="E3URYTY8ICV8ON"
 : "${GITHUB_CLIENT_ID:?Set GITHUB_CLIENT_ID}"
 : "${GITHUB_CLIENT_SECRET:?Set GITHUB_CLIENT_SECRET}"
 
-COOKIE_SECRET="${COOKIE_SECRET:-$(openssl rand -base64 32)}"
-echo "Cookie secret: $COOKIE_SECRET"
-echo "(Save this — needed if you redeploy)"
+: "${COOKIE_SECRET:?Set COOKIE_SECRET to a persistent secret before deploying}"
+echo "Using the supplied persistent cookie secret."
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LAMBDA_DIR="$SCRIPT_DIR/lambda-auth"
@@ -65,7 +64,7 @@ echo "Granting the auth function read access to private auth data..."
 aws iam put-role-policy \
     --role-name "$ROLE_NAME" \
     --policy-name "psap-reports-auth-data-read" \
-    --policy-document "{\n+        \"Version\": \"2012-10-17\",\n+        \"Statement\": [{\n+            \"Effect\": \"Allow\",\n+            \"Action\": \"s3:GetObject\",\n+            \"Resource\": [\n+                \"arn:aws:s3:::$S3_BUCKET/tokens.json\",\n+                \"arn:aws:s3:::$S3_BUCKET/allowlist.json\"\n+            ]\n+        }]\n+    }"
+    --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":[\"arn:aws:s3:::$S3_BUCKET/tokens.json\",\"arn:aws:s3:::$S3_BUCKET/allowlist.json\"]}]}"
 
 echo ""
 echo "=== Step 3: Create/Update Lambda Function ==="
