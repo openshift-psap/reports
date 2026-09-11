@@ -522,8 +522,16 @@ function escHtml(s) {
 const TOKEN_API = "__TOKEN_API_URL__";
 
 async function initAdmin() {
-  if (!TOKEN_API) return;
   const panel = document.getElementById("admin-panel");
+  if (!TOKEN_API) {
+    panel.style.display = "";
+    renderTokenTable([
+      { id: "psap_rht_demo12345678...", group: "everyone", note: "Demo token (no API configured)", created: "—", active: true },
+    ]);
+    document.getElementById("token-generate-btn").disabled = true;
+    document.getElementById("token-generate-btn").title = "Set token_api_url in s3_config.json to enable";
+    return;
+  }
   try {
     const resp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
     if (!resp.ok) return;
