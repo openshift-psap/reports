@@ -84,7 +84,8 @@ exports.handler = async (event) => {
     return { statusCode: 204, headers: corsHeaders(origin), body: '' };
   }
 
-  const cookies = parseCookies(event.headers && event.headers.cookie);
+  const requestHeaders = event.headers || {};
+  const cookies = parseCookies(requestHeaders.cookie || requestHeaders.Cookie);
   if (!verifyCookie(cookies[COOKIE_NAME])) {
     return response(401, { error: 'Not authenticated' }, origin);
   }

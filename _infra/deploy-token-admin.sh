@@ -38,6 +38,7 @@ echo "=== Create or update Lambda ==="
 ENVIRONMENT="Variables={S3_BUCKET=$S3_BUCKET,S3_REGION=$S3_REGION,COOKIE_SECRET=$COOKIE_SECRET}"
 if aws lambda get-function --function-name "$FUNCTION_NAME" --region "$REGION" >/dev/null 2>&1; then
   aws lambda update-function-code --function-name "$FUNCTION_NAME" --zip-file "fileb://$WORK_DIR/function.zip" --region "$REGION" >/dev/null
+  aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME" --region "$REGION"
   aws lambda update-function-configuration --function-name "$FUNCTION_NAME" --environment "$ENVIRONMENT" --region "$REGION" >/dev/null
 else
   aws lambda create-function --function-name "$FUNCTION_NAME" --runtime nodejs20.x --role "$ROLE_ARN" --handler index.handler --zip-file "fileb://$WORK_DIR/function.zip" --timeout 10 --memory-size 128 --environment "$ENVIRONMENT" --region "$REGION" >/dev/null
