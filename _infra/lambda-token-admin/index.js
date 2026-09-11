@@ -90,10 +90,11 @@ exports.handler = async (event) => {
   }
 
   const method = event.httpMethod;
-  const path = event.path || event.resource;
+  const path = event.path || event.resource || '';
+  const isTokensPath = path.endsWith('/tokens');
 
   // GET /tokens — list tokens (redacted)
-  if (method === 'GET' && path === '/tokens') {
+  if (method === 'GET' && isTokensPath) {
     const data = await getTokens();
     const redacted = Object.entries(data.tokens).map(([token, info]) => ({
       id: tokenPrefix(token, info) + '...',
@@ -106,7 +107,7 @@ exports.handler = async (event) => {
   }
 
   // POST /tokens — create token
-  if (method === 'POST' && path === '/tokens') {
+  if (method === 'POST' && isTokensPath) {
     let body = {};
     try { body = JSON.parse(event.body || '{}'); } catch (e) {}
     const group = body.group || 'everyone';
@@ -127,7 +128,7 @@ exports.handler = async (event) => {
   }
 
   // DELETE /tokens — revoke token by prefix
-  if (method === 'DELETE' && path === '/tokens') {
+  if (method === 'DELETE' && isTokensPath) {
     let body = {};
     try { body = JSON.parse(event.body || '{}'); } catch (e) {}
     const prefix = body.prefix || '';

@@ -1,5 +1,6 @@
 {
   "bucket": "psap-reports",
   "region": "us-east-1",
-  "cloudfront_domain": "d3a5l0t7t5dflc.cloudfront.net"
+  "cloudfront_domain": "d3a5l0t7t5dflc.cloudfront.net",
+  "token_api_url": "/_admin-api"
 }

@@ -41,6 +41,7 @@ jobs:
           BUCKET=$(python3 -c "import json; print(json.load(open('_generator/s3_config.json'))['bucket'])")
           [ -f public-reports.json ] && aws s3 cp public-reports.json "s3://${BUCKET}/public-reports.json"
           [ -f private-entries.json ] && aws s3 cp private-entries.json "s3://${BUCKET}/private-entries.json"
+          aws s3 cp index.html "s3://${BUCKET}/admin/index.html" --content-type text/html --cache-control no-store
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
