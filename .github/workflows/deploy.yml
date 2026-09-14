@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  pages: write
   id-token: write
 
 concurrency:
@@ -48,3 +49,12 @@ jobs:
 
       - name: Invalidate the report hub shell
         run: aws cloudfront create-invalidation --distribution-id E3URYTY8ICV8ON --paths / /index.html /admin/index.html /public-reports.json
+
+      # Preserve old GitHub Pages bookmarks without hosting report data there.
+      - name: Publish legacy Pages redirect
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: legacy-pages-redirect
+
+      - name: Deploy legacy Pages redirect
+        uses: actions/deploy-pages@v4
