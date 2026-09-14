@@ -2,6 +2,8 @@
 
 Report index served via GitHub Pages. All reports stored on S3, accessed via CloudFront with GitHub OAuth authentication.
 
+See [Using the PSAP Report Hub](USING_THE_REPORT_HUB.md) for browsing, sign-in, token management, and report publishing instructions.
+
 ## How it works
 
 1. **Report source lives in git** — each report has a self-contained `reports/<category>/<date>_<slug>/` directory
