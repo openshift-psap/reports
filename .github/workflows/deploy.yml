@@ -27,15 +27,17 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Configure AWS credentials through GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::194365112018:role/github-actions-psap-reports-deploy
+          aws-region: us-east-1
+
       - name: Generate index.html and public reports manifest
         run: python3 _generator/generate_index.py
 
       - name: Upload manifests to S3
         if: hashFiles('public-reports.json') != '' || hashFiles('private-entries.json') != ''
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: us-east-1
         run: |
           pip install -q awscli
           BUCKET=$(python3 -c "import json; print(json.load(open('_generator/s3_config.json'))['bucket'])")
