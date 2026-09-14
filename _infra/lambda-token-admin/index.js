@@ -115,10 +115,6 @@ function safeSlug(value) {
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
 }
 
-function validDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value || '') && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
-}
-
 function safeFileName(value) {
   const name = safeString(value, 300);
   if (!name || name.startsWith('/') || name.includes('\\') || name.split('/').some(part => !part || part === '.' || part === '..')) return null;
@@ -153,7 +149,7 @@ async function listReports(access) {
     }
     continuationToken = page.NextContinuationToken;
   } while (continuationToken);
-  return entries.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  return entries.sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
 }
 
 function reportEntry(submission) {
@@ -163,6 +159,7 @@ function reportEntry(submission) {
     description: submission.description,
     tags: submission.tags,
     date: submission.date,
+    submittedAt: submission.createdAt,
     author: submission.author,
     status: submission.status,
     category: submission.category,
@@ -176,13 +173,11 @@ function validateSubmission(body) {
   const access = body.access === 'authenticated' ? 'authenticated' : body.access;
   const category = safeString(body.category, 40);
   const title = safeString(body.title, 180);
-  const date = safeString(body.date, 10);
   const slug = safeSlug(body.slug || title);
   const files = Array.isArray(body.files) ? body.files : [];
   if (!REPORT_ACCESS.has(access)) return { error: 'access must be public or authenticated' };
   if (!REPORT_CATEGORIES.has(category)) return { error: 'Choose a supported category' };
   if (!title) return { error: 'A report title is required' };
-  if (!validDate(date)) return { error: 'date must use YYYY-MM-DD' };
   if (!slug) return { error: 'A URL slug or title containing letters/numbers is required' };
   if (!files.length || files.length > MAX_UPLOAD_FILES) return { error: `Choose 1–${MAX_UPLOAD_FILES} files, including index.html` };
   const normalizedFiles = [];
@@ -199,7 +194,7 @@ function validateSubmission(body) {
   if (totalBytes > MAX_UPLOAD_BYTES) return { error: 'The report bundle exceeds the 100 MB limit' };
   const tags = Array.isArray(body.tags) ? body.tags.map(tag => safeString(tag, 40)).filter(Boolean).slice(0, 20) : [];
   return {
-    access, category, title, date, slug, files: normalizedFiles, tags,
+    access, category, title, slug, files: normalizedFiles, tags,
     description: safeString(body.description, 1000),
     status: ['draft', 'final', 'archived'].includes(body.status) ? body.status : 'final',
     size: safeString(body.size, 40),
@@ -248,12 +243,14 @@ exports.handler = async (event) => {
     const submission = validateSubmission(parseBody(event.body));
     if (submission.error) return response(400, { error: submission.error }, origin);
     const id = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    submission.date = createdAt.slice(0, 10);
     const suffix = id.split('-')[0];
     const baseKey = `${submission.access === 'public' ? 'public' : 'private'}/${submission.category}/${submission.date}_${submission.slug}-${suffix}`;
     const pending = {
       ...submission, id, baseKey, cloudfrontDomain: process.env.CLOUDFRONT_DOMAIN,
       author: authenticated.githubHandle,
-      createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + UPLOAD_URL_TTL * 1000).toISOString(),
+      createdAt, expiresAt: new Date(Date.now() + UPLOAD_URL_TTL * 1000).toISOString(),
     };
     await putJson(`report-submissions/${id}.json`, pending);
     const uploads = await Promise.all(pending.files.map(async file => ({
@@ -295,7 +292,7 @@ exports.handler = async (event) => {
       expires: info.expires || null,
       active: tokenIsActive(info),
     }));
-    return response(200, { tokens: redacted }, origin);
+    return response(200, { tokens: redacted, githubHandle: authenticated.githubHandle }, origin);
   }
 
   // POST /tokens — create token

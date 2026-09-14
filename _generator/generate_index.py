@@ -169,12 +169,12 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
   <div id="admin-panel" hidden style="margin-top:2rem;padding-top:1.5rem;border-top:2px solid var(--border)">
     <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:0.5rem">Submit a report</h2>
     <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1rem">Report files upload directly to S3. They are not committed to GitHub.</p>
+    <p id="report-oauth-required" hidden style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1rem">Report submission requires GitHub identity. <a href="/_auth/github?state=/admin/index.html" style="color:#c00;font-weight:600">Sign in with GitHub</a>.</p>
     <form id="report-upload-form" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.65rem;margin-bottom:1.5rem">
       <input id="report-title" class="search-box" placeholder="Report title" required style="width:100%">
-      <div style="padding:0.5rem 0.75rem;border:1px solid var(--border);border-radius:6px;color:var(--text-secondary);font-size:0.85rem">Submitter: your verified GitHub handle</div>
+      <input id="report-author" class="search-box" readonly aria-label="Submitter GitHub handle" style="width:100%">
       <select id="report-category" class="sort-select"><option value="benchmarks">Benchmarks</option><option value="ci">CI</option><option value="investigations">Investigations</option><option value="presentations">Presentations</option></select>
-      <select id="report-access" class="sort-select"><option value="authenticated">PSAP members only</option><option value="public">Public</option></select>
-      <input id="report-date" class="search-box" type="date" required style="width:100%">
+      <select id="report-access" class="sort-select"><option value="authenticated">Red Hat Internal</option><option value="public">Public</option></select>
       <input id="report-tags" class="search-box" placeholder="Tags, comma-separated" style="width:100%">
       <input id="report-description" class="search-box" placeholder="Short description (optional)" style="grid-column:1 / -1;width:100%">
       <label style="grid-column:1 / -1;font-size:0.85rem;color:var(--text-secondary)">Choose the report folder (must contain a top-level <code>index.html</code>)<br><input id="report-files" type="file" webkitdirectory multiple required style="margin-top:0.35rem"></label>
@@ -388,7 +388,7 @@ async function loadPrivateEntries() {
     const data = await resp.json();
     const entries = data.reports || [];
     entries.forEach(e => REPORTS.push(e));
-    REPORTS.sort((a, b) => b.date.localeCompare(a.date));
+    REPORTS.sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
     rebuildFilters();
     render();
   } catch (e) { /* not authenticated or network error */ }
@@ -422,8 +422,8 @@ function filterReports() {
 function sortReports(list) {
   const copy = [...list];
   switch (sortBy) {
-    case "date-desc": copy.sort((a, b) => b.date.localeCompare(a.date)); break;
-    case "date-asc": copy.sort((a, b) => a.date.localeCompare(b.date)); break;
+    case "date-desc": copy.sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date))); break;
+    case "date-asc": copy.sort((a, b) => String(a.submittedAt || a.date).localeCompare(String(b.submittedAt || b.date))); break;
     case "title-asc": copy.sort((a, b) => a.title.localeCompare(b.title)); break;
     case "title-desc": copy.sort((a, b) => b.title.localeCompare(a.title)); break;
   }
@@ -449,7 +449,7 @@ function render() {
       <div class="card-top">
         <div class="card-meta">
           <span class="category-badge">${escHtml(r.category)}</span>
-          <span>${escHtml(r.date)}</span>
+          <span>${escHtml(formatSubmittedTime(r))}</span>
           ${r.author ? `<span>&middot; ${escHtml(r.author)}</span>` : ""}
         </div>
         ${r.authenticated ? '<span class="lock-badge"><svg viewBox="0 0 16 16"><path d="M4 6V4a4 4 0 1 1 8 0v2h1a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h1zm2-2a2 2 0 1 1 4 0v2H6V4z"/></svg>SSO</span>' : ''}
@@ -471,6 +471,12 @@ function escHtml(s) {
   return d.innerHTML;
 }
 
+function formatSubmittedTime(report) {
+  if (!report.submittedAt) return report.date || "";
+  const date = new Date(report.submittedAt);
+  return Number.isNaN(date.getTime()) ? report.date || "" : date.toLocaleString();
+}
+
 const TOKEN_API = "__TOKEN_API_URL__";
 
 async function initAdmin() {
@@ -490,6 +496,11 @@ async function initAdmin() {
     const data = await resp.json();
     panel.hidden = false;
     document.getElementById("submit-signin").hidden = true;
+    const submitter = document.getElementById("report-author");
+    submitter.value = data.githubHandle || "";
+    submitter.placeholder = data.githubHandle ? "" : "GitHub sign-in required to submit";
+    document.getElementById("report-upload-form").hidden = !data.githubHandle;
+    document.getElementById("report-oauth-required").hidden = !!data.githubHandle;
     renderTokenTable(data.tokens);
     loadPrivateEntries();
     initReportUpload();
@@ -528,7 +539,7 @@ function initReportUpload() {
   const form = document.getElementById("report-upload-form");
   if (!form || form.dataset.bound) return;
   form.dataset.bound = "true";
-  document.getElementById("report-date").value = new Date().toISOString().slice(0, 10);
+  const githubHandle = document.getElementById("report-author").value;
   form.addEventListener("submit", async event => {
     event.preventDefault();
     const button = document.getElementById("report-upload-btn");
@@ -543,7 +554,6 @@ function initReportUpload() {
       title: document.getElementById("report-title").value,
       category: document.getElementById("report-category").value,
       access: document.getElementById("report-access").value,
-      date: document.getElementById("report-date").value,
       tags: document.getElementById("report-tags").value.split(",").map(tag => tag.trim()).filter(Boolean),
       description: document.getElementById("report-description").value,
       files: files.map(({ name, size, contentType }) => ({ name, size, contentType })),
@@ -567,7 +577,8 @@ function initReportUpload() {
       const complete = await completeResponse.json();
       if (!completeResponse.ok) throw new Error(complete.error || "Could not publish report");
       status.textContent = "Published.";
-      form.reset(); document.getElementById("report-date").value = new Date().toISOString().slice(0, 10);
+      form.reset();
+      document.getElementById("report-author").value = githubHandle;
       await loadPublicEntries(); await loadPrivateEntries();
     } catch (error) {
       status.textContent = error.message || "Upload failed.";
