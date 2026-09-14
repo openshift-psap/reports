@@ -1,35 +1,16 @@
 #!/usr/bin/env python3
-"""Generate index.html for the PSAP report hub from reports/ folder structure."""
+"""Generate the static PSAP report hub shell.
+
+Report metadata and bundles are loaded from S3 at runtime; this generator never
+reads report source from the repository.
+"""
 
 import json
-import re
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-REPORTS_DIR = Path("reports")
 OUTPUT_FILE = Path("index.html")
 S3_CONFIG_PATH = Path(__file__).parent / "s3_config.json"
-
-
-def get_repo_url():
-    """Detect GitHub repo URL from git remote."""
-    result = subprocess.run(
-        ["git", "remote", "get-url", "origin"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        return ""
-    url = result.stdout.strip()
-    # git@github.com:user/repo.git -> https://github.com/user/repo
-    m = re.match(r"git@github\.com:(.+?)(?:\.git)?$", url)
-    if m:
-        return f"https://github.com/{m.group(1)}"
-    # https://github.com/user/repo.git -> https://github.com/user/repo
-    m = re.match(r"https://github\.com/(.+?)(?:\.git)?$", url)
-    if m:
-        return f"https://github.com/{m.group(1)}"
-    return ""
 
 
 
@@ -40,94 +21,22 @@ def load_s3_config():
     return None
 
 
-def discover_reports():
-    entries = []
-    if not REPORTS_DIR.exists():
-        return entries
-    s3_config = load_s3_config()
-    for category_dir in sorted(REPORTS_DIR.iterdir()):
-        if not category_dir.is_dir() or category_dir.name.startswith("."):
-            continue
-        category = category_dir.name
-        for report_dir in sorted(category_dir.iterdir()):
-            if not report_dir.is_dir() or report_dir.name.startswith("."):
-                continue
-            entry = parse_report(report_dir, category, s3_config)
-            if entry:
-                entries.append(entry)
-    return entries
-
-
-def parse_report(report_dir, category, s3_config=None):
-    meta_path = report_dir / "meta.json"
-    if not meta_path.exists():
-        return None
-    with open(meta_path) as f:
-        meta = json.load(f)
-
-    if not s3_config:
-        print(f"  Skipping {report_dir.name}: no s3_config.json")
-        return None
-    s3_key = meta.get("s3_key", "")
-    if not s3_key:
-        print(f"  Skipping {report_dir.name}: missing s3_key in meta.json")
-        return None
-    report_url = f"https://{s3_config['cloudfront_domain']}/{s3_key}"
-
-    folder_name = report_dir.name
-    date_match = re.match(r"(\d{4}-\d{2}-\d{2})[_-](.*)", folder_name)
-    if date_match:
-        derived_date = date_match.group(1)
-        derived_title = date_match.group(2).replace("-", " ").replace("_", " ").title()
-    else:
-        derived_date = ""
-        derived_title = folder_name.replace("-", " ").replace("_", " ").title()
-
-    return {
-        "title": meta.get("title", derived_title),
-        "description": meta.get("description", ""),
-        "tags": meta.get("tags", []),
-        "date": meta.get("date", derived_date),
-        "author": meta.get("author", ""),
-        "status": meta.get("status", "final"),
-        "category": category,
-        "path": report_url,
-        "folder": str(report_dir),
-        "size": meta.get("size", "—"),
-        "authenticated": meta.get("access") == "authenticated",
-    }
-
-
-PRIVATE_ENTRIES_FILE = Path("private-entries.json")
-
-
-def render_index(entries):
-    entries.sort(key=lambda e: e["date"], reverse=True)
-    public_entries = [e for e in entries if not e.get("authenticated")]
-    private_entries = [e for e in entries if e.get("authenticated")]
+def render_index():
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    repo_url = get_repo_url()
     s3_config = load_s3_config()
     cf_domain = s3_config["cloudfront_domain"] if s3_config else ""
 
     token_api = s3_config.get("token_api_url", "") if s3_config else ""
 
-    html = INDEX_TEMPLATE.replace("__ENTRIES_JSON__", json.dumps(public_entries, indent=2))
+    html = INDEX_TEMPLATE.replace("__ENTRIES_JSON__", "[]")
     html = html.replace("__GENERATED_AT__", generated_at)
-    html = html.replace("__REPORT_COUNT__", str(len(entries)))
-    html = html.replace("__REPO_URL__", repo_url)
+    html = html.replace("__REPORT_COUNT__", "0")
     html = html.replace("__CLOUDFRONT_DOMAIN__", cf_domain)
     html = html.replace("__TOKEN_API_URL__", token_api)
 
     OUTPUT_FILE.write_text(html)
-    print(f"Generated {OUTPUT_FILE} with {len(public_entries)} public reports")
-
-    if private_entries:
-        PRIVATE_ENTRIES_FILE.write_text(json.dumps(private_entries, indent=2) + "\n")
-        print(f"Generated {PRIVATE_ENTRIES_FILE} with {len(private_entries)} private entries")
-    elif PRIVATE_ENTRIES_FILE.exists():
-        PRIVATE_ENTRIES_FILE.unlink()
+    print(f"Generated {OUTPUT_FILE} as an S3-backed report hub shell")
 
 
 INDEX_TEMPLATE = r"""<!DOCTYPE html>
@@ -254,6 +163,20 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
   <div class="cards" id="cards"></div>
 
   <div id="admin-panel" style="display:none;margin-top:2rem;padding-top:1.5rem;border-top:2px solid var(--border)">
+    <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:0.5rem">Submit a report</h2>
+    <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1rem">Report files upload directly to S3. They are not committed to GitHub.</p>
+    <form id="report-upload-form" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.65rem;margin-bottom:1.5rem">
+      <input id="report-title" class="search-box" placeholder="Report title" required style="width:100%">
+      <input id="report-author" class="search-box" placeholder="Submitter (optional)" style="width:100%">
+      <select id="report-category" class="sort-select"><option value="benchmarks">Benchmarks</option><option value="ci">CI</option><option value="investigations">Investigations</option><option value="presentations">Presentations</option></select>
+      <select id="report-access" class="sort-select"><option value="authenticated">PSAP members only</option><option value="public">Public</option></select>
+      <input id="report-date" class="search-box" type="date" required style="width:100%">
+      <input id="report-tags" class="search-box" placeholder="Tags, comma-separated" style="width:100%">
+      <input id="report-description" class="search-box" placeholder="Short description (optional)" style="grid-column:1 / -1;width:100%">
+      <label style="grid-column:1 / -1;font-size:0.85rem;color:var(--text-secondary)">Choose the report folder (must contain a top-level <code>index.html</code>)<br><input id="report-files" type="file" webkitdirectory multiple required style="margin-top:0.35rem"></label>
+      <button id="report-upload-btn" type="submit" style="justify-self:start;padding:0.45rem 1rem;background:#EE0000;color:#fff;border:none;border-radius:6px;font-size:0.8rem;font-weight:600;cursor:pointer">Upload report</button>
+      <span id="report-upload-status" style="align-self:center;font-size:0.8rem;color:var(--text-secondary)"></span>
+    </form>
     <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem">Access Token Admin</h2>
     <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
       <input type="text" id="token-group" class="search-box" placeholder="Group (e.g. sales, engineering)" style="width:200px;font-size:0.8rem;padding:0.4rem 0.6rem">
@@ -287,7 +210,6 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
 
 <script>
 const REPORTS = __ENTRIES_JSON__;
-const REPO_URL = "__REPO_URL__";
 const CF_DOMAIN = "__CLOUDFRONT_DOMAIN__";
 
 let activeCategory = null;
@@ -309,7 +231,7 @@ function init() {
   document.getElementById("sort").addEventListener("change", e => { sortBy = e.target.value; render(); });
   rebuildFilters();
   render();
-  loadPrivateEntries();
+  loadPublicEntries();
 }
 
 function rebuildFilters() {
@@ -439,12 +361,28 @@ function rebuildAuthorSearch() {
   document.addEventListener("click", e => { if (!e.target.closest("#author-filters")) suggestions.style.display = "none"; });
 }
 
+function reportsApiUrl(access) {
+  const root = CF_DOMAIN ? `https://${CF_DOMAIN}` : window.location.origin;
+  return `${root}/_admin-api/reports?access=${encodeURIComponent(access)}`;
+}
+
+async function loadPublicEntries() {
+  try {
+    const resp = await fetch(reportsApiUrl("public"));
+    if (!resp.ok) return;
+    const data = await resp.json();
+    REPORTS.splice(0, REPORTS.length, ...(data.reports || []));
+    rebuildFilters(); render();
+  } catch (e) { /* temporary API/network error */ }
+}
+
 async function loadPrivateEntries() {
   if (!CF_DOMAIN) return;
   try {
-    const resp = await fetch(`https://${CF_DOMAIN}/private-entries.json`, { credentials: "include" });
+    const resp = await fetch(reportsApiUrl("authenticated"), { credentials: "include" });
     if (!resp.ok) return;
-    const entries = await resp.json();
+    const data = await resp.json();
+    const entries = data.reports || [];
     entries.forEach(e => REPORTS.push(e));
     REPORTS.sort((a, b) => b.date.localeCompare(a.date));
     rebuildFilters();
@@ -548,6 +486,8 @@ async function initAdmin() {
     panel.style.display = "";
     const data = await resp.json();
     renderTokenTable(data.tokens);
+    loadPrivateEntries();
+    initReportUpload();
   } catch (e) { return; }
 
   document.getElementById("token-generate-btn").addEventListener("click", async () => {
@@ -576,6 +516,58 @@ async function initAdmin() {
       }
     } catch (e) { console.error(e); }
     btn.disabled = false; btn.textContent = "Generate Token";
+  });
+}
+
+function initReportUpload() {
+  const form = document.getElementById("report-upload-form");
+  if (!form || form.dataset.bound) return;
+  form.dataset.bound = "true";
+  document.getElementById("report-date").value = new Date().toISOString().slice(0, 10);
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = document.getElementById("report-upload-btn");
+    const status = document.getElementById("report-upload-status");
+    const files = [...document.getElementById("report-files").files].map(file => ({
+      file,
+      name: file.webkitRelativePath || file.name,
+      size: file.size,
+      contentType: file.type || "application/octet-stream",
+    }));
+    const payload = {
+      title: document.getElementById("report-title").value,
+      author: document.getElementById("report-author").value,
+      category: document.getElementById("report-category").value,
+      access: document.getElementById("report-access").value,
+      date: document.getElementById("report-date").value,
+      tags: document.getElementById("report-tags").value.split(",").map(tag => tag.trim()).filter(Boolean),
+      description: document.getElementById("report-description").value,
+      files: files.map(({ name, size, contentType }) => ({ name, size, contentType })),
+    };
+    button.disabled = true;
+    try {
+      status.textContent = "Preparing secure upload…";
+      const planResponse = await fetch(`${TOKEN_API}/reports`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const plan = await planResponse.json();
+      if (!planResponse.ok) throw new Error(plan.error || "Could not prepare upload");
+      const byName = new Map(files.map(item => [item.name, item.file]));
+      let uploaded = 0;
+      for (const target of plan.uploads) {
+        status.textContent = `Uploading ${++uploaded} of ${plan.uploads.length}…`;
+        const file = byName.get(target.name);
+        const upload = await fetch(target.url, { method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream", "Cache-Control": "no-cache" }, body: file });
+        if (!upload.ok) throw new Error(`Upload failed for ${target.name}`);
+      }
+      status.textContent = "Publishing report…";
+      const completeResponse = await fetch(`${TOKEN_API}/reports/${plan.id}/complete`, { method: "POST", credentials: "include" });
+      const complete = await completeResponse.json();
+      if (!completeResponse.ok) throw new Error(complete.error || "Could not publish report");
+      status.textContent = "Published.";
+      form.reset(); document.getElementById("report-date").value = new Date().toISOString().slice(0, 10);
+      await loadPublicEntries(); await loadPrivateEntries();
+    } catch (error) {
+      status.textContent = error.message || "Upload failed.";
+    } finally { button.disabled = false; }
   });
 }
 
@@ -616,20 +608,16 @@ MANIFEST_FILE = Path("public-reports.json")
 
 
 def generate_manifest(entries):
-    """Write public-reports.json listing S3 paths that should bypass auth."""
-    public_paths = [
-        e["path"] for e in entries
-        if not e.get("authenticated")
-    ]
-    if not public_paths:
-        if MANIFEST_FILE.exists():
-            MANIFEST_FILE.unlink()
-        return
-    MANIFEST_FILE.write_text(json.dumps({"paths": public_paths}, indent=2) + "\n")
-    print(f"Generated {MANIFEST_FILE} with {len(public_paths)} public paths")
+    """Write the retired legacy path manifest.
+
+    Public content is now intentionally isolated below /public/, which the
+    edge authorizer permits directly. Keeping this empty closes the former
+    git-derived category paths after migration.
+    """
+    MANIFEST_FILE.write_text(json.dumps({"paths": []}, indent=2) + "\n")
+    print(f"Generated {MANIFEST_FILE} with no legacy public paths")
 
 
 if __name__ == "__main__":
-    entries = discover_reports()
-    render_index(entries)
-    generate_manifest(entries)
+    render_index()
+    generate_manifest([])

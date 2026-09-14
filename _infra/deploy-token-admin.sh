@@ -21,6 +21,19 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 
+cat > "$WORK_DIR/s3-cors.json" <<EOF
+{
+  "CORSRules": [{
+    "AllowedOrigins": ["https://${CF_DOMAIN}"],
+    "AllowedMethods": ["PUT"],
+    "AllowedHeaders": ["content-type", "cache-control"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 900
+  }]
+}
+EOF
+aws s3api put-bucket-cors --bucket "$S3_BUCKET" --cors-configuration "file://$WORK_DIR/s3-cors.json" --region "$S3_REGION"
+
 echo "=== Package token-admin Lambda ==="
 cp "$LAMBDA_DIR/index.js" "$LAMBDA_DIR/package.json" "$LAMBDA_DIR/package-lock.json" "$WORK_DIR/"
 (cd "$WORK_DIR" && npm ci --omit=dev --ignore-scripts && zip -qr function.zip index.js node_modules)
@@ -32,10 +45,10 @@ if ! aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
   aws iam attach-role-policy --role-name "$ROLE_NAME" --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
   sleep 10
 fi
-aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name psap-reports-token-admin-data --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\"],\"Resource\":\"arn:aws:s3:::$S3_BUCKET/tokens.json\"}]}"
+aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name psap-reports-token-admin-data --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\"],\"Resource\":\"arn:aws:s3:::$S3_BUCKET/tokens.json\"},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\",\"s3:DeleteObject\"],\"Resource\":[\"arn:aws:s3:::$S3_BUCKET/report-meta/*\",\"arn:aws:s3:::$S3_BUCKET/report-submissions/*\",\"arn:aws:s3:::$S3_BUCKET/public/*\",\"arn:aws:s3:::$S3_BUCKET/private/*\"]},{\"Effect\":\"Allow\",\"Action\":\"s3:ListBucket\",\"Resource\":\"arn:aws:s3:::$S3_BUCKET\",\"Condition\":{\"StringLike\":{\"s3:prefix\":[\"report-meta/*\"]}}}]}"
 
 echo "=== Create or update Lambda ==="
-ENVIRONMENT="Variables={S3_BUCKET=$S3_BUCKET,S3_REGION=$S3_REGION,COOKIE_SECRET=$COOKIE_SECRET}"
+ENVIRONMENT="Variables={S3_BUCKET=$S3_BUCKET,S3_REGION=$S3_REGION,COOKIE_SECRET=$COOKIE_SECRET,CLOUDFRONT_DOMAIN=$CF_DOMAIN}"
 if aws lambda get-function --function-name "$FUNCTION_NAME" --region "$REGION" >/dev/null 2>&1; then
   aws lambda update-function-code --function-name "$FUNCTION_NAME" --zip-file "fileb://$WORK_DIR/function.zip" --region "$REGION" >/dev/null
   aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME" --region "$REGION"
@@ -66,6 +79,26 @@ for method in GET POST DELETE; do
     aws apigateway put-method --rest-api-id "$API_ID" --resource-id "$TOKENS_ID" --http-method "$method" --authorization-type NONE --no-api-key-required >/dev/null
   fi
   aws apigateway put-integration --rest-api-id "$API_ID" --resource-id "$TOKENS_ID" --http-method "$method" --type AWS_PROXY --integration-http-method POST --uri "$INTEGRATION_URI" >/dev/null
+done
+REPORTS_ID=$(aws apigateway get-resources --rest-api-id "$API_ID" --query "items[?path=='$ROUTE_PREFIX/reports'].id | [0]" --output text)
+if [ -z "$REPORTS_ID" ] || [ "$REPORTS_ID" = "None" ]; then
+  REPORTS_ID=$(aws apigateway create-resource --rest-api-id "$API_ID" --parent-id "$PREFIX_ID" --path-part reports --query id --output text)
+fi
+REPORT_ID=$(aws apigateway get-resources --rest-api-id "$API_ID" --query "items[?path=='$ROUTE_PREFIX/reports/{id}'].id | [0]" --output text)
+if [ -z "$REPORT_ID" ] || [ "$REPORT_ID" = "None" ]; then
+  REPORT_ID=$(aws apigateway create-resource --rest-api-id "$API_ID" --parent-id "$REPORTS_ID" --path-part '{id}' --query id --output text)
+fi
+COMPLETE_ID=$(aws apigateway get-resources --rest-api-id "$API_ID" --query "items[?path=='$ROUTE_PREFIX/reports/{id}/complete'].id | [0]" --output text)
+if [ -z "$COMPLETE_ID" ] || [ "$COMPLETE_ID" = "None" ]; then
+  COMPLETE_ID=$(aws apigateway create-resource --rest-api-id "$API_ID" --parent-id "$REPORT_ID" --path-part complete --query id --output text)
+fi
+for method_resource in "GET:$REPORTS_ID" "POST:$REPORTS_ID" "POST:$COMPLETE_ID"; do
+  method=${method_resource%%:*}
+  resource_id=${method_resource#*:}
+  if ! aws apigateway get-method --rest-api-id "$API_ID" --resource-id "$resource_id" --http-method "$method" >/dev/null 2>&1; then
+    aws apigateway put-method --rest-api-id "$API_ID" --resource-id "$resource_id" --http-method "$method" --authorization-type NONE --no-api-key-required >/dev/null
+  fi
+  aws apigateway put-integration --rest-api-id "$API_ID" --resource-id "$resource_id" --http-method "$method" --type AWS_PROXY --integration-http-method POST --uri "$INTEGRATION_URI" >/dev/null
 done
 if ! aws lambda get-policy --function-name "$FUNCTION_NAME" --region "$REGION" --query Policy --output text 2>/dev/null | grep -q 'AllowApiGatewayInvoke'; then
   aws lambda add-permission --function-name "$FUNCTION_NAME" --statement-id AllowApiGatewayInvoke --action lambda:InvokeFunction --principal apigateway.amazonaws.com --source-arn "arn:aws:execute-api:${REGION}:${ACCOUNT_ID}:${API_ID}/*/*/*" --region "$REGION" >/dev/null
@@ -121,7 +154,7 @@ behavior['AllowedMethods'] = {
     'CachedMethods': {'Quantity': 2, 'Items': ['GET', 'HEAD']},
 }
 behavior['ForwardedValues'] = {
-    'QueryString': False,
+    'QueryString': True,
     'Cookies': {'Forward': 'whitelist', 'WhitelistedNames': {'Quantity': 1, 'Items': ['psap_auth']}},
     'Headers': {'Quantity': 2, 'Items': ['Content-Type', 'Origin']},
     'QueryStringCacheKeys': {'Quantity': 0},

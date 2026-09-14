@@ -2,8 +2,8 @@
 
 The PSAP Report Hub has a public index and a secure report delivery site:
 
-- **Browse reports:** <https://openshift-psap.github.io/reports/>
-- **Sign in and manage access tokens:** <https://d3a5l0t7t5dflc.cloudfront.net/admin/index.html>
+- **Browse reports:** <https://d3a5l0t7t5dflc.cloudfront.net/>
+- **Sign in, submit reports, and manage access tokens:** <https://d3a5l0t7t5dflc.cloudfront.net/admin/index.html>
 
 ## Browse reports
 
@@ -19,7 +19,7 @@ Open a private report, or select **Sign in / Manage reports** from the index hea
 1. **GitHub sign-in** — use this if you are an `openshift-psap` organization member or your GitHub username is allowlisted.
 2. **Access token** — paste a token beginning with `psap_rht_` that was shared with you through an approved private channel.
 
-Successful sign-in creates a secure browser session valid for seven days.
+GitHub sign-in creates a secure browser session valid for one day; a token sign-in session is valid for seven days.
 
 If you need access, contact **#forum-psap** on Slack.
 
@@ -36,42 +36,14 @@ All authenticated PSAP members can use the protected admin page to manage tokens
 
 An expired or revoked token prevents future sign-ins with it. Browser sessions created before expiry or revocation remain valid until their seven-day expiry.
 
-## Publish a report
+## Submit a report
 
-Report source is version-controlled in this repository. A report directory must contain `index.html`, `meta.json`, and any relative assets:
+1. Open <https://d3a5l0t7t5dflc.cloudfront.net/admin/index.html> and sign in.
+2. Under **Submit a report**, enter the title, category, date, optional submitter/tags/description, and visibility.
+3. Use the file picker to select the complete report folder. It must include `index.html` at its top level; relative assets and subfolders are supported.
+4. Select **Upload report** and leave the page open until it says **Published**.
 
-```text
-reports/<category>/<YYYY-MM-DD>_<slug>/
-├── index.html
-├── meta.json
-└── assets/              # optional
-```
-
-Use this metadata shape:
-
-```json
-{
-  "title": "Report title",
-  "description": "Short summary",
-  "tags": ["benchmark", "gpu"],
-  "date": "2026-09-14",
-  "author": "github-username",
-  "status": "final",
-  "s3_key": "<category>/<YYYY-MM-DD>_<slug>/index.html",
-  "access": "authenticated",
-  "size": "1.2 MB"
-}
-```
-
-`s3_key` must exactly match the report directory relative to `reports/`, followed by `/index.html`. Set `access` to either `public` or `authenticated`.
-
-Before opening a pull request, run:
-
-```bash
-python3 _generator/validate_reports.py
-```
-
-After merge to `main`, GitHub Actions validates all report directories, publishes report files to S3 through OIDC, regenerates the index and manifests, and invalidates the affected CloudFront paths. It does not automatically delete removed report files from S3.
+The browser uploads directly to S3 using URLs that expire after 15 minutes. Report content and private report metadata are never committed to this public GitHub repository. A bundle is limited to 100 files and 100 MB.
 
 ## Troubleshooting
 
@@ -80,4 +52,4 @@ After merge to `main`, GitHub Actions validates all report directories, publishe
 | A public report shows the sign-in page | Wait a minute for the deployment/invalidation, then confirm its `meta.json` has `"access": "public"`. |
 | A private report denies GitHub sign-in | Confirm you are in `openshift-psap` or request allowlist access through **#forum-psap**. |
 | A token is rejected | Check that it was copied in full and has not been revoked. Request a new token through **#forum-psap**. |
-| The publish workflow fails validation | Read the validation output; every `meta.json` must be valid and every report must contain `index.html`. |
+| Upload fails before completion | Check the bundle contains a top-level `index.html`, is under 100 MB / 100 files, and retry to obtain fresh upload URLs. |

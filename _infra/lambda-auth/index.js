@@ -204,6 +204,12 @@ exports.handler = async (event) => {
   const headers = request.headers;
   const uri = request.uri;
 
+  // The hub shell, public reports, and the unauthenticated public-report index
+  // endpoint are deliberately public. Private reports live exclusively below
+  // /private/ and are never included here.
+  if (uri === '/' || uri === '/index.html' || uri.startsWith('/public/')) return request;
+  if (uri === '/_admin-api/reports' && request.method === 'GET' &&
+      /(^|&)access=public(&|$)/.test(request.querystring || '')) return request;
   if (uri === CONFIG.publicManifestPath) return request;
   if ((await getPublicPaths()).has(uri)) return request;
 
