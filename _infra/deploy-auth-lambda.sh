@@ -104,13 +104,14 @@ echo "=== Step 5: Associate with CloudFront ==="
 ETAG=$(aws cloudfront get-distribution-config --id "$DIST_ID" --query 'ETag' --output text)
 aws cloudfront get-distribution-config --id "$DIST_ID" --query 'DistributionConfig' > /tmp/cf-dist-config.json
 
-# Add Lambda association to the default cache behavior
+# Associate the viewer-request authorizer with every behavior.  The API route
+# is a separate cache behavior and must receive the same version; otherwise it
+# can keep an older auth policy after an edge deployment.
 python3 -c "
 import json
 with open('/tmp/cf-dist-config.json') as f:
     config = json.load(f)
-dcb = config['DefaultCacheBehavior']
-dcb['LambdaFunctionAssociations'] = {
+association = {
     'Quantity': 1,
     'Items': [{
         'LambdaFunctionARN': '$VERSION_ARN',
@@ -118,6 +119,9 @@ dcb['LambdaFunctionAssociations'] = {
         'IncludeBody': False
     }]
 }
+config['DefaultCacheBehavior']['LambdaFunctionAssociations'] = association
+for behavior in config.get('CacheBehaviors', {}).get('Items', []):
+    behavior['LambdaFunctionAssociations'] = association
 with open('/tmp/cf-dist-config.json', 'w') as f:
     json.dump(config, f, indent=2)
 "
