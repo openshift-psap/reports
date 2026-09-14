@@ -16,6 +16,10 @@ concurrency:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    # Retained as the OIDC-protected deployment environment. This does not
+    # publish GitHub Pages; the hub itself is deployed only to S3/CloudFront.
+    environment:
+      name: github-pages
     steps:
       - uses: actions/checkout@v4
 
