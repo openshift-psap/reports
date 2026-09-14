@@ -162,7 +162,11 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
 
   <div class="cards" id="cards"></div>
 
-  <div id="admin-panel" style="display:none;margin-top:2rem;padding-top:1.5rem;border-top:2px solid var(--border)">
+  <div id="submit-signin" style="margin-top:2rem;padding:1rem 1.25rem;border:1px solid var(--border);border-radius:8px;background:#f8f8f8;font-size:0.9rem">
+    Want to publish a report? <a href="https://__CLOUDFRONT_DOMAIN__/_auth/github?state=/admin/index.html" style="color:#c00;font-weight:600">Sign in with GitHub</a>.
+  </div>
+
+  <div id="admin-panel" hidden style="margin-top:2rem;padding-top:1.5rem;border-top:2px solid var(--border)">
     <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:0.5rem">Submit a report</h2>
     <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1rem">Report files upload directly to S3. They are not committed to GitHub.</p>
     <form id="report-upload-form" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.65rem;margin-bottom:1.5rem">
@@ -483,8 +487,9 @@ async function initAdmin() {
   try {
     const resp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
     if (!resp.ok) return;
-    panel.style.display = "";
     const data = await resp.json();
+    panel.hidden = false;
+    document.getElementById("submit-signin").hidden = true;
     renderTokenTable(data.tokens);
     loadPrivateEntries();
     initReportUpload();
