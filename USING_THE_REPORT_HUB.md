@@ -45,6 +45,17 @@ An expired or revoked token prevents future sign-ins with it. Browser sessions c
 
 The browser uploads directly to S3 using URLs that expire after 15 minutes. Report content and private report metadata are never committed to this public GitHub repository. A bundle is limited to 100 files and 100 MB.
 
+### Non-HTML reports
+
+Every submission must include a top-level `index.html`. This is the report landing page and keeps navigation, authorization, and relative assets consistent.
+
+- **Quarto, Jupyter, Allure, and slide decks:** render or export them to static HTML and upload the resulting folder.
+- **PDFs:** include a small `index.html` landing page that describes the report and embeds or links to `report.pdf`.
+- **Office documents:** convert to PDF and include an HTML landing page.
+- **Large data or downloadable artifacts:** upload them as relative files alongside an HTML summary with download links.
+
+Do not add server-side document converters or executable report generators to the submission service. Static HTML bundles are safer, portable, and work with the existing CloudFront authorization model.
+
 ## Troubleshooting
 
 | Problem | What to do |
