@@ -64,7 +64,7 @@ echo "Granting the auth function read access to private auth data..."
 aws iam put-role-policy \
     --role-name "$ROLE_NAME" \
     --policy-name "psap-reports-auth-data-read" \
-    --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":[\"arn:aws:s3:::$S3_BUCKET/tokens.json\",\"arn:aws:s3:::$S3_BUCKET/allowlist.json\"]}]}"
+    --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":[\"arn:aws:s3:::$S3_BUCKET/tokens.json\",\"arn:aws:s3:::$S3_BUCKET/allowlist.json\",\"arn:aws:s3:::$S3_BUCKET/public-reports.json\"]}]}"
 
 echo ""
 echo "=== Step 3: Create/Update Lambda Function ==="

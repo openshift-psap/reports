@@ -20,7 +20,7 @@ const CONFIG = {
   publicManifestPath: '/public-reports.json',
 };
 
-const CACHE = { tokens: null, tokensAt: 0, allowlist: null, allowlistAt: 0 };
+const CACHE = { tokens: null, tokensAt: 0, allowlist: null, allowlistAt: 0, publicPaths: null, publicPathsAt: 0 };
 const CACHE_TTL = 60000;
 const s3 = new S3Client({ region: CONFIG.s3Region });
 
@@ -66,6 +66,19 @@ async function getAllowlist() {
   const data = await fetchS3Json('allowlist.json');
   if (data) { CACHE.allowlist = data; CACHE.allowlistAt = Date.now(); }
   return data || { users: [] };
+}
+
+async function getPublicPaths() {
+  if (CACHE.publicPaths && Date.now() - CACHE.publicPathsAt < CACHE_TTL) return CACHE.publicPaths;
+  const data = await fetchS3Json(CONFIG.publicManifestPath.substring(1));
+  if (!data || !Array.isArray(data.paths)) return new Set();
+  const paths = new Set(data.paths.map(path => {
+    try { return new URL(path).pathname; }
+    catch (e) { return path; }
+  }));
+  CACHE.publicPaths = paths;
+  CACHE.publicPathsAt = Date.now();
+  return paths;
 }
 
 function signCookie(value) {
@@ -178,6 +191,7 @@ exports.handler = async (event) => {
   const uri = request.uri;
 
   if (uri === CONFIG.publicManifestPath) return request;
+  if ((await getPublicPaths()).has(uri)) return request;
 
   // GitHub OAuth redirect
   if (uri === CONFIG.githubPath) {

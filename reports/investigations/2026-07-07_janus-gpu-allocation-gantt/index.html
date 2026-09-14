@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Janus GPU Allocation Gantt Chart — Jul 6-8 2026</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+h1 { font-size: 18px; margin-bottom: 4px; color: #e6edf3; }
+.subtitle { font-size: 13px; color: #8b949e; margin-bottom: 16px; }
+.controls { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+.controls label { font-size: 12px; color: #8b949e; }
+.controls select, .controls input { background: #161b22; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 8px; border-radius: 4px; font-family: inherit; font-size: 12px; }
+.legend { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.legend-swatch { width: 14px; height: 14px; border-radius: 2px; }
+.chart-container { position: relative; overflow-x: auto; overflow-y: visible; }
+canvas { display: block; }
+.tooltip { position: fixed; background: #1c2128; border: 1px solid #30363d; border-radius: 6px; padding: 10px 14px; font-size: 12px; pointer-events: none; display: none; z-index: 1000; max-width: 400px; line-height: 1.5; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+.tooltip .tt-title { font-weight: bold; color: #e6edf3; margin-bottom: 4px; }
+.tooltip .tt-row { color: #8b949e; }
+.tooltip .tt-val { color: #c9d1d9; }
+.finding-box { background: #1c2128; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-top: 20px; }
+.finding-box h2 { font-size: 15px; color: #f85149; margin-bottom: 10px; }
+.finding-box p { font-size: 13px; line-height: 1.6; color: #c9d1d9; margin-bottom: 8px; }
+.finding-box code { background: #161b22; padding: 2px 6px; border-radius: 3px; color: #79c0ff; }
+.gpu-meter { display: inline-flex; gap: 2px; vertical-align: middle; }
+.gpu-meter .gpu-block { width: 8px; height: 12px; border-radius: 1px; }
+.gpu-meter .gpu-used { background: #f0883e; }
+.gpu-meter .gpu-free { background: #21262d; border: 1px solid #30363d; }
+</style>
+</head>
+<body>
+
+<h1>Janus Cluster — GPU Allocation Timeline</h1>
+<div class="subtitle">2 nodes × 8 H200 GPUs · nvidia device plugin + composite DRA driver · Jul 6–8 2026 UTC</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-swatch" style="background:#58a6ff"></div> nvidia.com/gpu (device plugin)</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#f0883e"></div> composite.dra/gpu-nic-pair (DRA)</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(248,81,73,0.15); border:1px solid #f85149"></div> FailedScheduling window</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#238636"></div> Successfully scheduled (after switch to device plugin)</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#30363d"></div> Non-GPU pods (router/pcp)</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#d2a8ff; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)"></div> Slack thread event</div>
+</div>
+
+<div class="controls">
+  <label>Zoom: <select id="zoom">
+    <option value="1">Full 48h</option>
+    <option value="2">24h (Jul 7)</option>
+    <option value="4" selected>Conflict window (Jul 7 03:00–21:00)</option>
+    <option value="8">Detail (Jul 7 04:00–08:00)</option>
+  </select></label>
+  <label><input type="checkbox" id="showNonGpu"> Show non-GPU pods</label>
+  <label><input type="checkbox" id="showStacked" checked> Stacked GPU view</label>
+  <label><input type="checkbox" id="showAnnotations" checked> Slack thread markers</label>
+</div>
+
+<div class="chart-container">
+  <canvas id="gantt"></canvas>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<div class="finding-box">
+  <h2>Root Cause: Device Plugin / DRA Resource Accounting Conflict</h2>
+  <p>
+    Both <code>nvidia-device-plugin</code> (publishing <code>nvidia.com/gpu</code> as extended resources) and
+    <code>composite-dra-driver</code> (publishing <code>composite.dra.io/gpu-nic-pair</code> as DRA ResourceSlices)
+    advertise the <strong>same physical GPUs</strong> on each node.
+  </p>
+  <p>
+    When nathans' pods consumed GPUs via <code>nvidia.com/gpu</code>, the device plugin decremented the node's
+    allocatable count — but the composite DRA driver's ResourceSlices still showed 8 available <code>gpu-nic-pair</code>
+    devices per node.
+  </p>
+  <p>
+    When nathans' pods consumed GPUs via <code>nvidia.com/gpu</code>, the device plugin decremented the node's
+    allocatable count — but the composite DRA driver's ResourceSlices still showed 8 available
+    <code>gpu-nic-pair</code> devices per node.
+  </p>
+  <h2 style="color:#ffa657">Key Finding: mkm Was FREE But DRA Still Rejected It</h2>
+  <p>
+    mkm had <span style="color:#3fb950; font-weight:bold">0 device-plugin GPUs allocated</span> from
+    <strong>13:41–19:44 UTC</strong> (6 hours!). The composite DRA ResourceSlice correctly published 8
+    <code>gpu-nic-pair</code> devices on mkm. Yet michey's DRA pod targeting mkm at 19:09 still got
+    "Insufficient composite.dra/gpu-nic-pair."
+  </p>
+  <p>
+    Switching to <code>nvidia.com/gpu</code> device plugin immediately succeeded on the
+    <em>same node</em> (mkm) at 19:44 — proving GPUs were physically free.
+  </p>
+  <h2 style="color:#d2a8ff">Root Cause Hypotheses</h2>
+  <p>
+    The composite DRA driver's <code>template-reconciler</code> (webhook) was continuously failing with
+    <strong>RBAC errors</strong> — it could not list pods in <code>glm-5-pp</code> (michey's namespace)
+    or <code>default</code>. This every-5-minute error (<code>reconciler.go:66</code>) may have:
+  </p>
+  <ul style="margin-left:20px; color:#c9d1d9; font-size:13px; line-height:1.8">
+    <li>Prevented cleanup of stale ResourceClaims from prior composite DRA test runs</li>
+    <li>Left the scheduler's in-memory DRA allocation table with phantom device reservations</li>
+    <li>Blocked the webhook from properly reconciling ResourceClaimTemplates in <code>glm-5-pp</code></li>
+  </ul>
+  <p>
+    <strong>Evidence:</strong> Stale <code>smoke-1-pair-composite-gpu-nic-pair</code> ResourceClaimTemplate
+    exists in <code>default</code> namespace since Jun 29 — the reconciler can't clean it up due to
+    the same RBAC error.
+  </p>
+  <p>
+    <strong>Fix:</strong> (1) Grant <code>composite-dra-driver</code> ServiceAccount pod list/watch
+    permissions in <code>glm-5-pp</code> and <code>default</code> namespaces.
+    (2) Clean up stale ResourceClaimTemplates in <code>default</code>.
+    (3) All users use the same GPU allocation mechanism to avoid cross-mechanism conflicts.
+  </p>
+</div>
+
+<script>
+const EVENTS = [
+  // Format: [timestamp_ms, event_type, owner, pod_short, node_short, gpus, resource_type, end_ms]
+  // Non-overlapping blocks per node. Each block = period where that workload held GPUs.
+  // Derived from scheduler bind logs; end times = when next workload replaced it on same node.
+
+  // ====== xngg (8×H200) ======
+
+  // Early qwen3-30b individual pods (1 GPU each, additive)
+  [Date.UTC(2026,6,6,8,45,48),  "bound", "nathans", "qwen3-30b ×1",  "xngg", 1, "device-plugin", Date.UTC(2026,6,6,10,20,21)],
+  [Date.UTC(2026,6,6,10,20,21), "bound", "nathans", "qwen3-30b ×2",  "xngg", 2, "device-plugin", Date.UTC(2026,6,6,10,43,57)],
+  [Date.UTC(2026,6,6,10,43,57), "bound", "nathans", "qwen3-30b ×3",  "xngg", 3, "device-plugin", Date.UTC(2026,6,6,23,52,19)],
+
+  // Batch waves — each REPLACES previous (same ReplicaSet 658c6cdd57, scale events)
+  [Date.UTC(2026,6,6,23,52,19), "bound", "nathans", "qwen3-30b ×7",  "xngg", 7, "device-plugin", Date.UTC(2026,6,7,1,3,4)],
+  [Date.UTC(2026,6,7,1,3,4),    "bound", "nathans", "llama-70b ×3",  "xngg", 6, "device-plugin", Date.UTC(2026,6,7,2,2,45)],
+  [Date.UTC(2026,6,7,2,2,45),   "bound", "nathans", "qwen3-30b ×8",  "xngg", 8, "device-plugin", Date.UTC(2026,6,7,6,32,6)],
+  // gpt-oss-120b replaces qwen3-30b on xngg
+  [Date.UTC(2026,6,7,6,32,6),   "bound", "nathans", "gpt-oss-120b ×2", "xngg", 8, "device-plugin", Date.UTC(2026,6,7,12,3,7)],
+  // gpt-oss-120b redeploy (still 8 GPUs)
+  [Date.UTC(2026,6,7,12,3,7),   "bound", "nathans", "gpt-oss-120b ×2", "xngg", 8, "device-plugin", null],
+
+  // guidellm (0 GPUs, long-running)
+  [Date.UTC(2026,6,6,7,30,51),  "bound", "nathans", "guidellm",      "xngg", 0, "none", null],
+
+  // ====== mkm (8×H200) ======
+
+  [Date.UTC(2026,6,7,1,1,58),   "bound", "nathans", "llama-70b ×1",  "mkm",  2, "device-plugin", Date.UTC(2026,6,7,2,4,40)],
+  [Date.UTC(2026,6,7,2,4,40),   "bound", "nathans", "llama-70b ×1",  "mkm",  2, "device-plugin", Date.UTC(2026,6,7,2,34,0)],
+  // llama-70b scaled to 4 pods on mkm (2 GPUs × 4 = 8 GPUs, continuous with rotations)
+  [Date.UTC(2026,6,7,2,34,0),   "bound", "nathans", "llama-70b ×4",  "mkm",  8, "device-plugin", Date.UTC(2026,6,7,13,41,0)],
+
+  // ====== CONFLICT ZONE ======
+
+  // michey's first failed pod — targeting xngg
+  [Date.UTC(2026,6,7,5,13,43),  "fail_start", "michey", "vllm-tp8-node2-0 (DRA)", "xngg", 8, "dra", null],
+  [Date.UTC(2026,6,7,19,4,47),  "fail_end",   "michey", "vllm-tp8-node2-0 (DRA)", "xngg", 8, "dra", null],
+
+  // michey's second failed pod — targeting mkm (mkm FREE since 13:41!)
+  [Date.UTC(2026,6,7,19,9,21),  "fail_start", "michey", "vllm-tp8-0 (DRA)", "mkm", 8, "dra", null],
+  [Date.UTC(2026,6,7,19,39,47), "fail_end",   "michey", "vllm-tp8-0 (DRA)", "mkm", 8, "dra", null],
+
+  // michey switches to device plugin → immediate success on mkm
+  [Date.UTC(2026,6,7,19,44,10), "bound", "michey", "vllm-tp8-0 (DP)", "mkm", 8, "device-plugin-success", null],
+
+  // === Jul 8 — nathans moves llama-70b to xngg ===
+  [Date.UTC(2026,6,8,0,17,2),   "bound", "nathans", "llama-70b ×4",  "xngg", 8, "device-plugin", null],
+];
+
+const COLORS = {
+  "device-plugin": "#58a6ff",
+  "dra": "#f0883e",
+  "device-plugin-success": "#238636",
+  "none": "#30363d",
+  "fail": "rgba(248,81,73,0.18)",
+  "fail-border": "#f85149",
+};
+
+// Slack thread timestamps (EDT → UTC, +4h)
+const ANNOTATIONS = [
+  [Date.UTC(2026,6,7,5,27,0),  "michey: pod pending on xngg",          "#d2a8ff"],
+  [Date.UTC(2026,6,7,13,34,0), "thameem: will take a look",            "#d2a8ff"],
+  [Date.UTC(2026,6,7,13,49,0), "thameem: nathans consuming xngg GPUs", "#d2a8ff"],
+  [Date.UTC(2026,6,7,19,8,0),  "michey: pods were fresh, old ones on mkm", "#d2a8ff"],
+  [Date.UTC(2026,6,7,19,11,0), "michey: switched to mkm, still fails", "#ffa657"],
+  [Date.UTC(2026,6,7,19,12,0), "thameem: revert to device plugin",     "#d2a8ff"],
+  [Date.UTC(2026,6,7,19,57,0), "michey: worked with device plugin",    "#3fb950"],
+];
+
+// mkm FREE window — GPUs available but DRA rejected
+const MKM_FREE_WINDOW = [Date.UTC(2026,6,7,13,41,0), Date.UTC(2026,6,7,19,44,0)];
+
+const NODE_LABELS = { "mkm": "Node: 22mkm (8×H200)", "xngg": "Node: 8xngg (8×H200)" };
+const ZOOM_RANGES = {
+  "1": [Date.UTC(2026,6,6,6,0), Date.UTC(2026,6,8,2,0)],
+  "2": [Date.UTC(2026,6,7,0,0), Date.UTC(2026,6,8,0,0)],
+  "4": [Date.UTC(2026,6,7,3,0), Date.UTC(2026,6,7,21,0)],
+  "8": [Date.UTC(2026,6,7,4,0), Date.UTC(2026,6,7,8,0)],
+};
+
+const canvas = document.getElementById('gantt');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
+const dpr = window.devicePixelRatio || 1;
+
+const ROW_H = 28;
+const HEADER_H = 36;
+const TIME_AXIS_H = 140;
+const LEFT_MARGIN = 220;
+const RIGHT_MARGIN = 40;
+const TOP_MARGIN = 10;
+const GPU_METER_H = 80;
+const NODE_GAP = 20;
+
+let currentZoom = "4";
+let showNonGpu = false;
+let showStacked = true;
+let hoveredEvent = null;
+
+function getVisibleEvents() {
+  let evts = EVENTS.filter(e => e[1] === "bound" || e[1] === "fail_start");
+  if (!showNonGpu) evts = evts.filter(e => e[5] > 0 || e[1] === "fail_start");
+  return evts;
+}
+
+function buildRows() {
+  const evts = getVisibleEvents();
+  const rows = [];
+  const nodes = ["xngg", "mkm"];
+
+  for (const node of nodes) {
+    rows.push({ type: "header", node, label: NODE_LABELS[node] });
+    if (showStacked) {
+      rows.push({ type: "gpu-meter", node });
+    }
+    const nodeEvts = evts.filter(e => e[4] === node);
+    const seen = new Set();
+    for (const e of nodeEvts) {
+      const key = `${e[2]}/${e[3]}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        rows.push({ type: "event", node, event: e, key });
+      }
+    }
+    rows.push({ type: "gap" });
+  }
+  return rows;
+}
+
+function timeToX(t, range, chartW) {
+  return LEFT_MARGIN + ((t - range[0]) / (range[1] - range[0])) * chartW;
+}
+
+function xToTime(x, range, chartW) {
+  return range[0] + ((x - LEFT_MARGIN) / chartW) * (range[1] - range[0]);
+}
+
+function fmtTime(ms) {
+  const d = new Date(ms);
+  const mo = d.getUTCMonth() + 1;
+  const dd = d.getUTCDate();
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  return `Jul ${dd} ${hh}:${mm}`;
+}
+
+function fmtDuration(ms) {
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function computeGpuTimeline(node, range) {
+  const points = [];
+  const boundEvts = EVENTS.filter(e => e[1] === "bound" && e[4] === node && e[5] > 0);
+
+  const changes = [];
+  for (const e of boundEvts) {
+    changes.push([e[0], e[5]]);
+    const end = e[7] || range[1];
+    changes.push([end, -e[5]]);
+  }
+  changes.sort((a, b) => a[0] - b[0]);
+
+  // Compute GPU count at range start from events that span into the range
+  let gpus = 0;
+  for (const [t, delta] of changes) {
+    if (t >= range[0]) break;
+    gpus = Math.max(0, gpus + delta);
+  }
+
+  let lastT = range[0];
+  points.push([range[0], gpus]);
+  for (const [t, delta] of changes) {
+    if (t < range[0]) continue;
+    if (t > range[1]) break;
+    if (t !== lastT) {
+      points.push([t, gpus]);
+    }
+    gpus = Math.max(0, gpus + delta);
+    points.push([t, gpus]);
+    lastT = t;
+  }
+  points.push([range[1], gpus]);
+  return points;
+}
+
+function draw() {
+  const range = ZOOM_RANGES[currentZoom];
+  const rows = buildRows();
+  const chartW = Math.max(800, window.innerWidth - LEFT_MARGIN - RIGHT_MARGIN - 60);
+  const totalH = TOP_MARGIN + rows.length * ROW_H + TIME_AXIS_H + 20;
+
+  canvas.width = (LEFT_MARGIN + chartW + RIGHT_MARGIN) * dpr;
+  canvas.height = totalH * dpr;
+  canvas.style.width = `${LEFT_MARGIN + chartW + RIGHT_MARGIN}px`;
+  canvas.style.height = `${totalH}px`;
+  ctx.scale(dpr, dpr);
+
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+
+  // Draw fail regions first (background)
+  const failEvts = EVENTS.filter(e => e[1] === "fail_start");
+  for (const fe of failEvts) {
+    const endEvt = EVENTS.find(e => e[1] === "fail_end" && e[3] === fe[3]);
+    if (!endEvt) continue;
+    const x1 = timeToX(fe[0], range, chartW);
+    const x2 = timeToX(endEvt[0], range, chartW);
+    if (x2 < LEFT_MARGIN || x1 > LEFT_MARGIN + chartW) continue;
+    const cx1 = Math.max(LEFT_MARGIN, x1);
+    const cx2 = Math.min(LEFT_MARGIN + chartW, x2);
+    ctx.fillStyle = COLORS.fail;
+    ctx.fillRect(cx1, TOP_MARGIN, cx2 - cx1, totalH - TIME_AXIS_H - TOP_MARGIN - 20);
+    ctx.strokeStyle = COLORS["fail-border"];
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(cx1, TOP_MARGIN);
+    ctx.lineTo(cx1, totalH - TIME_AXIS_H - 20);
+    ctx.moveTo(cx2, TOP_MARGIN);
+    ctx.lineTo(cx2, totalH - TIME_AXIS_H - 20);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // mkm FREE window highlight (green dashed, bottom half only — mkm section)
+  if (MKM_FREE_WINDOW[0] < range[1] && MKM_FREE_WINDOW[1] > range[0]) {
+    const fx1 = Math.max(LEFT_MARGIN, timeToX(MKM_FREE_WINDOW[0], range, chartW));
+    const fx2 = Math.min(LEFT_MARGIN + chartW, timeToX(MKM_FREE_WINDOW[1], range, chartW));
+    // Draw green border region
+    ctx.fillStyle = 'rgba(63,185,80,0.06)';
+    ctx.fillRect(fx1, TOP_MARGIN, fx2 - fx1, totalH - TIME_AXIS_H - TOP_MARGIN - 20);
+    ctx.strokeStyle = '#3fb950';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(fx1, TOP_MARGIN);
+    ctx.lineTo(fx1, totalH - TIME_AXIS_H - 20);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(fx2, TOP_MARGIN);
+    ctx.lineTo(fx2, totalH - TIME_AXIS_H - 20);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Label
+    const midX = (fx1 + fx2) / 2;
+    ctx.fillStyle = '#3fb950';
+    ctx.font = 'bold 11px "SF Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('mkm FREE (0 GPUs) — but DRA still says Insufficient!', midX, TOP_MARGIN + 14);
+  }
+
+  // Time axis
+  const timeY = totalH - TIME_AXIS_H;
+  ctx.strokeStyle = '#30363d';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(LEFT_MARGIN, timeY);
+  ctx.lineTo(LEFT_MARGIN + chartW, timeY);
+  ctx.stroke();
+
+  const rangeDur = range[1] - range[0];
+  let tickInterval;
+  if (rangeDur <= 4 * 3600000) tickInterval = 15 * 60000;
+  else if (rangeDur <= 12 * 3600000) tickInterval = 30 * 60000;
+  else if (rangeDur <= 24 * 3600000) tickInterval = 60 * 60000;
+  else tickInterval = 2 * 3600000;
+
+  const firstTick = Math.ceil(range[0] / tickInterval) * tickInterval;
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '11px "SF Mono", "Fira Code", monospace';
+  ctx.textAlign = 'center';
+  for (let t = firstTick; t <= range[1]; t += tickInterval) {
+    const x = timeToX(t, range, chartW);
+    ctx.strokeStyle = '#21262d';
+    ctx.beginPath();
+    ctx.moveTo(x, TOP_MARGIN);
+    ctx.lineTo(x, timeY);
+    ctx.stroke();
+    ctx.strokeStyle = '#30363d';
+    ctx.beginPath();
+    ctx.moveTo(x, timeY);
+    ctx.lineTo(x, timeY + 6);
+    ctx.stroke();
+    ctx.fillText(fmtTime(t), x, timeY + 20);
+  }
+
+  // Slack thread annotation markers
+  const showAnnotations = document.getElementById('showAnnotations').checked;
+  if (showAnnotations) {
+    for (const [t, label, color] of ANNOTATIONS) {
+      if (t < range[0] || t > range[1]) continue;
+      const ax = timeToX(t, range, chartW);
+      // Vertical line
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(ax, TOP_MARGIN);
+      ctx.lineTo(ax, timeY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Diamond marker at top
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(ax, TOP_MARGIN - 2);
+      ctx.lineTo(ax + 5, TOP_MARGIN + 4);
+      ctx.lineTo(ax, TOP_MARGIN + 10);
+      ctx.lineTo(ax - 5, TOP_MARGIN + 4);
+      ctx.closePath();
+      ctx.fill();
+      // Rotated label below time axis
+      ctx.save();
+      ctx.translate(ax, timeY + 8);
+      ctx.rotate(-Math.PI / 4);
+      ctx.fillStyle = color;
+      ctx.font = '10px "SF Mono", monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(label, 0, 0);
+      ctx.restore();
+    }
+  }
+
+  // "Now" line
+  const now = Date.UTC(2026,6,8,1,11,0);
+  if (now >= range[0] && now <= range[1]) {
+    const nx = timeToX(now, range, chartW);
+    ctx.strokeStyle = '#f0883e';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    ctx.moveTo(nx, TOP_MARGIN);
+    ctx.lineTo(nx, timeY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#f0883e';
+    ctx.font = '10px "SF Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('now', nx, timeY + 34);
+  }
+
+  // Draw rows
+  let y = TOP_MARGIN;
+  const hitboxes = [];
+
+  for (const row of rows) {
+    if (row.type === "header") {
+      ctx.fillStyle = '#161b22';
+      ctx.fillRect(0, y, LEFT_MARGIN + chartW + RIGHT_MARGIN, ROW_H);
+      ctx.fillStyle = '#e6edf3';
+      ctx.font = 'bold 13px "SF Mono", monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(row.label, 12, y + ROW_H / 2 + 4);
+      y += ROW_H;
+    } else if (row.type === "gpu-meter") {
+      const meterH = GPU_METER_H;
+      ctx.fillStyle = '#0d1117';
+      ctx.fillRect(LEFT_MARGIN, y, chartW, meterH);
+
+      // GPU capacity line at 8
+      const capY = y + meterH - (8 / 8) * (meterH - 10) - 5;
+      ctx.strokeStyle = '#f8514933';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 3]);
+      ctx.beginPath();
+      ctx.moveTo(LEFT_MARGIN, capY);
+      ctx.lineTo(LEFT_MARGIN + chartW, capY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#f85149';
+      ctx.font = '10px "SF Mono", monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText('8 GPU capacity', LEFT_MARGIN - 6, capY + 3);
+
+      // Draw stacked GPU usage
+      const timeline = computeGpuTimeline(row.node, range);
+      ctx.beginPath();
+      ctx.moveTo(LEFT_MARGIN, y + meterH - 5);
+      for (const [t, gpus] of timeline) {
+        const px = timeToX(t, range, chartW);
+        const py = y + meterH - (gpus / 8) * (meterH - 10) - 5;
+        ctx.lineTo(Math.max(LEFT_MARGIN, Math.min(LEFT_MARGIN + chartW, px)), py);
+      }
+      ctx.lineTo(LEFT_MARGIN + chartW, y + meterH - 5);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(88,166,255,0.15)';
+      ctx.fill();
+      ctx.strokeStyle = '#58a6ff';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      let first = true;
+      for (const [t, gpus] of timeline) {
+        const px = timeToX(t, range, chartW);
+        const py = y + meterH - (gpus / 8) * (meterH - 10) - 5;
+        const cx = Math.max(LEFT_MARGIN, Math.min(LEFT_MARGIN + chartW, px));
+        if (first) { ctx.moveTo(cx, py); first = false; }
+        else ctx.lineTo(cx, py);
+      }
+      ctx.stroke();
+
+      // GPU count labels on left
+      ctx.fillStyle = '#484f58';
+      ctx.font = '10px "SF Mono", monospace';
+      ctx.textAlign = 'right';
+      for (let g = 0; g <= 8; g += 2) {
+        const gy = y + meterH - (g / 8) * (meterH - 10) - 5;
+        ctx.fillText(String(g), LEFT_MARGIN - 24, gy + 3);
+      }
+
+      // Label
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '10px "SF Mono", monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText('GPU usage (device plugin)', 12, y + 14);
+
+      y += meterH;
+    } else if (row.type === "event") {
+      const e = row.event;
+      const isFail = e[1] === "fail_start";
+
+      // Row background
+      if (Math.floor((y - TOP_MARGIN) / ROW_H) % 2 === 0) {
+        ctx.fillStyle = '#0d1117';
+      } else {
+        ctx.fillStyle = '#161b2208';
+      }
+      ctx.fillRect(LEFT_MARGIN, y, chartW, ROW_H);
+
+      // Row label
+      ctx.fillStyle = isFail ? '#f85149' : '#c9d1d9';
+      ctx.font = '11px "SF Mono", monospace';
+      ctx.textAlign = 'right';
+      const owner = e[2] === "michey" ? "michey" : "nathans";
+      const label = `${owner}: ${e[3]}`;
+      ctx.fillText(label.substring(0, 30), LEFT_MARGIN - 8, y + ROW_H / 2 + 4);
+
+      // GPU count
+      if (e[5] > 0) {
+        ctx.fillStyle = '#8b949e';
+        ctx.font = '10px "SF Mono", monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${e[5]}G`, 12, y + ROW_H / 2 + 4);
+      }
+
+      // Bar
+      const startX = timeToX(e[0], range, chartW);
+      let endX;
+      if (isFail) {
+        const endEvt = EVENTS.find(ev => ev[1] === "fail_end" && ev[3] === e[3]);
+        endX = endEvt ? timeToX(endEvt[0], range, chartW) : timeToX(range[1], range, chartW);
+      } else {
+        const endT = e[7] || Date.UTC(2026, 6, 8, 1, 11, 0);
+        endX = timeToX(endT, range, chartW);
+      }
+
+      const barX1 = Math.max(LEFT_MARGIN, startX);
+      const barX2 = Math.min(LEFT_MARGIN + chartW, endX);
+      const barW = Math.max(2, barX2 - barX1);
+      const barY = y + 4;
+      const barH = ROW_H - 8;
+
+      if (isFail) {
+        ctx.fillStyle = 'rgba(248,81,73,0.25)';
+        ctx.fillRect(barX1, barY, barW, barH);
+        ctx.strokeStyle = '#f85149';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(barX1, barY, barW, barH);
+        // Hatch pattern
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(barX1, barY, barW, barH);
+        ctx.clip();
+        ctx.strokeStyle = 'rgba(248,81,73,0.3)';
+        ctx.lineWidth = 1;
+        for (let hx = barX1 - barH; hx < barX1 + barW; hx += 8) {
+          ctx.beginPath();
+          ctx.moveTo(hx, barY + barH);
+          ctx.lineTo(hx + barH, barY);
+          ctx.stroke();
+        }
+        ctx.restore();
+      } else {
+        let color;
+        if (e[6] === "device-plugin-success") color = COLORS["device-plugin-success"];
+        else if (e[6] === "device-plugin") color = COLORS["device-plugin"];
+        else if (e[6] === "dra") color = COLORS["dra"];
+        else color = COLORS["none"];
+
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.8;
+        ctx.fillRect(barX1, barY, barW, barH);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(barX1, barY, barW, barH);
+
+        // GPU count inside bar if wide enough
+        if (barW > 30 && e[5] > 0) {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 10px "SF Mono", monospace';
+          ctx.textAlign = 'left';
+          ctx.fillText(`${e[5]}G`, barX1 + 4, barY + barH - 4);
+        }
+      }
+
+      hitboxes.push({ x: barX1, y: barY, w: barW, h: barH, event: e });
+
+      y += ROW_H;
+    } else if (row.type === "gap") {
+      y += NODE_GAP;
+    }
+  }
+
+  return { hitboxes, range, chartW };
+}
+
+let state = draw();
+
+// Zoom control
+document.getElementById('zoom').value = currentZoom;
+document.getElementById('zoom').addEventListener('change', (e) => {
+  currentZoom = e.target.value;
+  state = draw();
+});
+
+document.getElementById('showNonGpu').addEventListener('change', (e) => {
+  showNonGpu = e.target.checked;
+  state = draw();
+});
+
+document.getElementById('showStacked').addEventListener('change', (e) => {
+  showStacked = e.target.checked;
+  state = draw();
+});
+
+document.getElementById('showAnnotations').addEventListener('change', (e) => {
+  state = draw();
+});
+
+// Tooltip
+canvas.addEventListener('mousemove', (ev) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = ev.clientX - rect.left;
+  const my = ev.clientY - rect.top;
+
+  let hit = null;
+  for (const hb of state.hitboxes) {
+    if (mx >= hb.x && mx <= hb.x + hb.w && my >= hb.y && my <= hb.y + hb.h) {
+      hit = hb;
+      break;
+    }
+  }
+
+  if (hit) {
+    const e = hit.event;
+    const isFail = e[1] === "fail_start";
+    const endEvt = isFail ? EVENTS.find(ev => ev[1] === "fail_end" && ev[3] === e[3]) : null;
+    const endT = isFail ? (endEvt ? endEvt[0] : null) : (e[7] || null);
+    const dur = endT ? endT - e[0] : null;
+
+    let html = `<div class="tt-title">${e[2]}: ${e[3]}</div>`;
+    html += `<div class="tt-row">Node: <span class="tt-val">${e[4]}</span></div>`;
+    html += `<div class="tt-row">GPUs: <span class="tt-val">${e[5]}</span></div>`;
+    html += `<div class="tt-row">Resource: <span class="tt-val">${e[6].replace('device-plugin-success', 'nvidia.com/gpu (switched)')}</span></div>`;
+    html += `<div class="tt-row">Start: <span class="tt-val">${fmtTime(e[0])}</span></div>`;
+    if (endT) html += `<div class="tt-row">End: <span class="tt-val">${fmtTime(endT)}</span></div>`;
+    if (dur) html += `<div class="tt-row">Duration: <span class="tt-val">${fmtDuration(dur)}</span></div>`;
+    if (isFail) {
+      const retries = EVENTS.filter(ev => ev[1] === "fail_start" && ev[3] === e[3]);
+      html += `<div class="tt-row" style="color:#f85149">Status: <span class="tt-val">FailedScheduling</span></div>`;
+      html += `<div class="tt-row" style="color:#f85149">Reason: <span class="tt-val">Insufficient composite.dra/gpu-nic-pair</span></div>`;
+    }
+
+    tooltip.innerHTML = html;
+    tooltip.style.display = 'block';
+    tooltip.style.left = `${ev.clientX + 14}px`;
+    tooltip.style.top = `${ev.clientY - 10}px`;
+
+    // Keep tooltip on screen
+    const ttRect = tooltip.getBoundingClientRect();
+    if (ttRect.right > window.innerWidth) {
+      tooltip.style.left = `${ev.clientX - ttRect.width - 14}px`;
+    }
+    if (ttRect.bottom > window.innerHeight) {
+      tooltip.style.top = `${ev.clientY - ttRect.height + 10}px`;
+    }
+  } else {
+    tooltip.style.display = 'none';
+  }
+});
+
+canvas.addEventListener('mouseleave', () => {
+  tooltip.style.display = 'none';
+});
+
+window.addEventListener('resize', () => { state = draw(); });
+</script>
+</body>
+</html>

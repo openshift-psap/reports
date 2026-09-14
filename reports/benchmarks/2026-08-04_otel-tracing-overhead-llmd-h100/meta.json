@@ -1,0 +1,11 @@
+{
+  "title": "OTel Tracing Overhead — llm-d v0.8.1 on H100",
+  "description": "Zero measurable overhead from OTel tracing at 100% sampling on vLLM inference",
+  "tags": ["otel", "tracing", "overhead", "llm-d", "h100", "vllm", "benchmark"],
+  "date": "2026-08-04",
+  "author": "Thameem Abbas Ibrahim Bathusha",
+  "status": "final",
+  "s3_key": "benchmarks/2026-08-04_otel-tracing-overhead-llmd-h100/index.html",
+  "access": "public",
+  "size": "12 KB"
+}

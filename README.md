@@ -4,15 +4,16 @@ Report index served via GitHub Pages. All reports stored on S3, accessed via Clo
 
 ## How it works
 
-1. **Reports live on S3** — HTML files uploaded to the S3 bucket
-2. **Metadata lives in git** — each report has a `reports/<category>/<date>_<slug>/meta.json`
+1. **Report source lives in git** — each report has a self-contained `reports/<category>/<date>_<slug>/` directory
+2. **Reports deploy to S3** — GitHub Actions validates and publishes report HTML/assets using GitHub OIDC
 3. **Index auto-generated** — GitHub Actions runs `_generator/generate_index.py` on push, deploys to GitHub Pages
 4. **Auth via CloudFront** — authenticated reports gated by GitHub OAuth; public reports served without auth
 
 ## Adding a report
 
 1. Create folder: `reports/<category>/<YYYY-MM-DD>_<slug>/`
-2. Add `meta.json`:
+2. Add `index.html` and any relative assets to that folder.
+3. Add `meta.json`:
    ```json
    {
      "title": "Report Title",
@@ -26,11 +27,11 @@ Report index served via GitHub Pages. All reports stored on S3, accessed via Clo
      "size": "2.4 MB"
    }
    ```
-3. Upload report HTML to S3:
+4. Validate locally (optional):
    ```bash
-   python3 _generator/s3_upload.py reports/<category>/<YYYY-MM-DD>_<slug>/
+   python3 _generator/validate_reports.py
    ```
-4. Push meta.json (PR or direct) — index rebuilds on merge
+5. Open a PR. On merge to `main`, GitHub Actions publishes the report, manifests, and index.
 
 ## Access levels
 
@@ -44,11 +45,12 @@ Report index served via GitHub Pages. All reports stored on S3, accessed via Clo
 - `benchmarks/` — performance benchmarks, load tests
 - `investigations/` — debugging reports, root cause analyses
 - `ci/` — CI/CD test results, Allure suites
+- `presentations/` — presentation decks and visual explainers
 
 ## Configuration
 
 - `_generator/s3_config.json` — S3 bucket, region, CloudFront domain
-- GitHub repo secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+- AWS access is provided by the restricted `github-actions-psap-reports-deploy` OIDC role; no repository AWS secrets are required.
 
 ## Architecture decisions
 
@@ -58,11 +60,9 @@ The full report index is baked into `index.html` as a JSON array. All filtering,
 
 **When to reconsider:** If the report count exceeds ~10,000, the index JSON enters MB range and initial render may slow. At that point, evaluate moving to a server-side API (API Gateway + Lambda querying DynamoDB or S3 Select) with paginated responses. This is a different architecture — don't prematurely optimize.
 
-### Upload model: Option A (direct CLI)
+### Upload model: validated CI publish
 
-Users upload reports to S3 via `_generator/s3_upload.py` locally using AWS credentials. The script derives the S3 destination path from `meta.json`'s `s3_key` field, preventing path errors.
-
-**Growth path (Option C):** When the team grows or non-technical contributors need to upload, switch to a staging prefix model: users upload to `s3://<bucket>/_staging/<slug>/`, PR contains only `meta.json`, and CI promotes files from staging to the final `s3_key` path on merge. This adds a validation layer (CI can check file existence, size, HTML validity) without requiring code changes to the generator or index.
+The merge-to-`main` workflow validates every report, publishes its non-metadata files to the S3 prefix declared by `s3_key`, updates the index/manifests, and invalidates the affected CloudFront paths. It never deletes report artifacts automatically; archival or removal must be an explicit operation.
 
 ### Report format: HTML only
 

@@ -1,0 +1,11 @@
+{
+  "title": "Janus GPU Allocation Gantt Chart",
+  "description": "GPU allocation timeline visualization for Janus debug events, Jul 6-8 2026",
+  "tags": ["gpu allocation failure", "gpu", "dra", "composite-dra-driver", "device plugin"],
+  "date": "2026-07-07",
+  "author": "thameem-abbas",
+  "status": "final",
+  "s3_key": "investigations/2026-07-07_janus-gpu-allocation-gantt/index.html",
+  "access": "public",
+  "size": "28 KB"
+}

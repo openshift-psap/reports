@@ -1,0 +1,11 @@
+{
+  "title": "OpenSM on ConnectX-8 (CX8/XDR) — GB200 NVL4 Bring-Up",
+  "description": "CX8 IB bring-up on GB200 NVL4: kernel modules, DOCA-OFED, SMI devices, OpenSM 5.27, mlxlink diagnostics. Includes OCP pod reproduction steps.",
+  "tags": ["gb200", "cx8", "opensm", "infiniband", "xdr"],
+  "date": "2026-08-03",
+  "author": "Thameem Abbas",
+  "status": "final",
+  "s3_key": "investigations/2026-08-03_opensm-cx8-xdr-gb200-nvl4-bringup/index.html",
+  "access": "public",
+  "size": "16 KB"
+}

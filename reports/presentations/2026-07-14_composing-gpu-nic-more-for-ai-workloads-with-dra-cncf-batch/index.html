@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Composing GPU + NIC + more for AI Workloads with DRA — CNCF Batch Subproject</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css">
+<style>
+  :root {
+    --r-heading-font: 'Inter', system-ui, sans-serif;
+    --r-main-font: 'Inter', system-ui, sans-serif;
+    --r-code-font: 'JetBrains Mono', 'Fira Code', monospace;
+    --r-background-color: #0d1117;
+    --r-main-color: #c9d1d9;
+    --r-heading-color: #58a6ff;
+    --r-link-color: #58a6ff;
+  }
+  .reveal { font-size: 28px; }
+  .reveal h1 { font-size: 2.0em; font-weight: 700; }
+  .reveal h2 { font-size: 1.5em; font-weight: 600; color: #58a6ff; }
+  .reveal h3 { font-size: 1.1em; font-weight: 500; color: #7ee787; }
+  .reveal pre { font-size: 0.55em; box-shadow: none; }
+  .reveal pre code { padding: 16px; border-radius: 8px; background: #161b22; max-height: 520px; }
+  .reveal .stage-label {
+    display: inline-block; padding: 4px 14px; border-radius: 20px;
+    font-size: 0.65em; font-weight: 600; margin-bottom: 12px; letter-spacing: 0.5px;
+  }
+  .stage-problem  { background: #db617733; color: #ff7b72; border: 1px solid #db6171; }
+  .stage-arch     { background: #1f6feb33; color: #58a6ff; border: 1px solid #1f6feb; }
+  .stage-value    { background: #23863633; color: #7ee787; border: 1px solid #238636; }
+  .stage-feedback { background: #a371f733; color: #d2a8ff; border: 1px solid #a371f7; }
+  .stage-prepare  { background: #f0883e33; color: #ffa657; border: 1px solid #f0883e; }
+  .stage-context  { background: #38849633; color: #56d4dd; border: 1px solid #388496; }
+  .reveal .box {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 16px 20px; margin: 10px 0; text-align: left;
+  }
+  .reveal .box-green  { border-left: 4px solid #238636; }
+  .reveal .box-blue   { border-left: 4px solid #1f6feb; }
+  .reveal .box-orange { border-left: 4px solid #f0883e; }
+  .reveal .box-purple { border-left: 4px solid #a371f7; }
+  .reveal .box-red    { border-left: 4px solid #db6171; }
+  .reveal .box-teal   { border-left: 4px solid #388496; }
+  .reveal .dim { color: #484f58; }
+  .reveal .hl  { color: #ffa657; font-weight: 600; }
+  .reveal .grn { color: #7ee787; }
+  .reveal .blu { color: #58a6ff; }
+  .reveal .pur { color: #d2a8ff; }
+  .reveal .red { color: #ff7b72; }
+  .reveal table { font-size: 0.7em; margin: 0 auto; }
+  .reveal table th { background: #161b22; color: #58a6ff; }
+  .reveal table td, .reveal table th { padding: 8px 14px; border: 1px solid #30363d; }
+  .reveal .flow-arrow { color: #484f58; font-size: 1.4em; }
+  .reveal .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .reveal .grid-2x2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .reveal .check { color: #7ee787; }
+  .reveal .cross { color: #ff7b72; }
+  .pipeline { display: flex; align-items: center; justify-content: center; gap: 0; margin: 20px 0; }
+  .pipeline .step {
+    background: #161b22; border: 2px solid #30363d; border-radius: 8px;
+    padding: 14px 20px; text-align: center; min-width: 140px;
+  }
+  .pipeline .arrow { color: #484f58; font-size: 1.8em; padding: 0 6px; }
+  .pipeline .step-watch  { border-color: #1f6feb; color: #58a6ff; }
+  .pipeline .step-pair   { border-color: #238636; color: #7ee787; }
+  .pipeline .step-pub    { border-color: #a371f7; color: #d2a8ff; }
+  .pipeline .step-prep   { border-color: #f0883e; color: #ffa657; }
+  .stat-row {
+    display: flex; justify-content: center; gap: 30px; margin: 20px 0;
+    font-size: 0.75em;
+  }
+  .stat-row .stat {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 14px 24px; text-align: center;
+  }
+  .stat-row .stat .num { font-size: 1.8em; font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- ============================================================ -->
+<!-- SLIDE 1: Title -->
+<!-- ============================================================ -->
+<section>
+  <h1>Composing GPU + NIC + more<br>for AI Workloads with DRA</h1>
+  <p style="color:#8b949e; font-size:0.8em;">What we learned solving multi-device allocation for distributed workloads</p>
+  <br>
+  <p style="font-size:0.7em;">Thameem Abbas &nbsp;·&nbsp; PSAP &nbsp;·&nbsp; Red Hat</p>
+  <div style="font-size:0.55em; color:#484f58; margin-top: 24px;">
+    <a href="https://github.com/kubernetes-sigs/wg-device-management/issues/54">wg-device-management/issues/54</a><br>
+    <a href="https://github.com/openshift-psap/composite-dra-driver">github.com/openshift-psap/composite-dra-driver</a>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 2: Context — The Workload -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-context">CONTEXT</span>
+  <h2>The Workload: Distributed Inference at Scale</h2>
+  <div class="box box-teal" style="font-size:0.78em; max-width:800px; margin:20px auto;">
+    <p><strong>llm-d inference serving on IBM Cloud</strong></p>
+    <p style="margin-top:8px;">8× GPU + 8× RDMA NIC per node. Each GPU must pair with the NIC on its PCIe root for optimal GPUDirect RDMA data path.</p>
+  </div>
+  <div class="stat-row">
+    <div class="stat">
+      <div class="num grn">318 Gb/s</div>
+      <div>RDMA write bandwidth<br><span class="dim">when topology is correct</span></div>
+    </div>
+    <div class="stat">
+      <div class="num red">&lt;50 Gb/s</div>
+      <div>RDMA write bandwidth<br><span class="dim">when GPU-NIC pairing is wrong</span></div>
+    </div>
+  </div>
+  <p style="font-size:0.75em; color:#8b949e; margin-top:14px;">
+    Getting topology right is not optional — it's a 6× bandwidth difference.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 3: Challenge 1 — real production YAML -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-problem">CHALLENGE 1</span>
+  <h2>Multi-Device Allocation Is Manual</h2>
+  <p style="font-size:0.78em; color:#c9d1d9; margin-bottom:6px;">
+    GPU and NIC are managed by separate DRA drivers. Pairing them by topology requires<br>
+    per-rail ResourceClaimTemplates with hardcoded CEL selectors and routing config.<br>
+    <span class="dim" style="font-size:0.88em;">Note: generic attributes like <code>pcieRoot</code> and <code>numaNode</code> are being standardized across drivers — we already use these for pairing.</span>
+  </p>
+  <p style="font-size:0.60em; color:#484f58; margin-bottom:8px;">
+    Source: <a href="https://github.com/openshift-psap/ibmcloud-roce-dra-net-setup/tree/main/h100">openshift-psap/ibmcloud-roce-dra-net-setup</a>
+  </p>
+  <div style="display:grid; grid-template-columns:1fr 0.8fr 0.6fr; gap:14px; font-size:0.78em; margin-top:6px; align-items:start;">
+    <div>
+<pre style="font-size:0.50em; margin:0;"><code class="language-yaml"># gpu-nic-rail0-template.yaml  (1 of 4 files)
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: gpu-nic-rail0-template
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.nvidia.com
+          allocationMode: ExactCount
+          count: 1
+      - name: nic
+        exactly:
+          deviceClassName: dranet
+          allocationMode: ExactCount
+          count: 1
+          selectors:
+          - cel:
+              expression: >-
+                device.attributes["dra.net"]
+                  .rdma == true
+                && device.attributes["dra.net"]
+                  .ipv4.startsWith("10.0.")
+      constraints:
+      - requests: [gpu, nic]
+        matchAttribute:
+          resource.kubernetes.io/pcieRoot</code></pre>
+    </div>
+    <div>
+<pre style="font-size:0.50em; margin:0; border: 2px solid #db6171; border-radius:8px;"><code class="language-yaml" style="background:#1a0a0a !important;">      # ⚠ Per-rail routing — hardcoded
+      config:
+      - requests: [nic]
+        opaque:
+          driver: dra.net
+          parameters:
+            interface:
+              mtu: 9000
+              name: net1
+            routes:
+            - destination: 10.0.0.0/16
+              scope: 253
+              table: 100
+            - destination: 10.1.0.0/16
+              gateway: 10.0.0.1
+            - destination: 10.2.0.0/16
+              gateway: 10.0.0.1
+            - destination: 10.3.0.0/16
+              gateway: 10.0.0.1
+            # ... routes to all 8 rails
+            - destination: 0.0.0.0/0
+              gateway: 10.0.0.1
+              table: 100
+            rules:
+            - priority: 32765
+              source: 10.0.0.0/16
+              table: 100</code></pre>
+      <div class="box box-orange" style="font-size:0.70em; margin-top:6px; text-align:center; padding:6px 10px;">
+        <span class="hl">× 8 template files</span> per cluster<br>
+        <span class="dim">Subnets, gateways, routing tables —<br>infrastructure detail in workload YAML</span>
+      </div>
+    </div>
+    <div>
+<pre style="font-size:0.50em; margin:0;"><code class="language-yaml"># Pod spec — template refs
+spec:
+  resourceClaims:
+  - name: gpu-nic-rail0
+    resourceClaimTemplateName:
+      gpu-nic-rail0-template
+  - name: gpu-nic-rail1
+    resourceClaimTemplateName:
+      gpu-nic-rail1-template
+  - name: gpu-nic-rail2
+    resourceClaimTemplateName:
+      gpu-nic-rail2-template
+  - name: gpu-nic-rail3
+    resourceClaimTemplateName:
+      gpu-nic-rail3-template
+  containers:
+  - name: worker
+    resources:
+      claims:
+      - name: gpu-nic-rail0
+      - name: gpu-nic-rail1
+      - name: gpu-nic-rail2
+      - name: gpu-nic-rail3</code></pre>
+    </div>
+  </div>
+  <div style="display:flex; gap:14px; font-size:0.68em; margin-top:8px;">
+    <div class="box box-red" style="flex:1; padding:8px 14px; text-align:center;">
+      Workload authors become infrastructure experts.<br>
+      <span class="red" style="font-weight:600;">Infrastructure topology leaks into workload specs.</span>
+    </div>
+    <div class="box box-blue" style="flex:1; padding:8px 14px; text-align:center;">
+      <code>dra.net</code> now supports custom providers to handle some of this routing complexity —<br>
+      but that's <span class="blu">one driver</span>. Other drivers won't have this, and environments will still likely<br>
+      need additional configuration on top.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 4: Challenge 2 -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-problem">CHALLENGE 2</span>
+  <h2>Per-Device Config for Sub-Node Pods</h2>
+  <div class="box box-red" style="font-size:0.78em; max-width:800px; margin:20px auto;">
+    <p>Inference serving, fine-tuning, and smaller batch jobs share a node.<br>
+    Each pod gets a <strong>subset</strong> of GPU-NIC pairs — not the whole node.</p>
+    <p style="margin-top:12px;">
+      Pod A gets rails 0–3 with gateways <code>10.0.0.1</code>–<code>10.3.0.1</code><br>
+      Pod B gets rails 4–7 with gateways <code>10.4.0.1</code>–<code>10.7.0.1</code>
+    </p>
+  </div>
+  <div class="stat-row">
+    <div class="stat" style="border-left: 4px solid #db6171;">
+      <div class="num red">?</div>
+      <div>which rails a pod gets<br><span class="dim">depends on scheduler placement</span></div>
+    </div>
+    <div class="stat" style="border-left: 4px solid #f0883e;">
+      <div class="num hl">1</div>
+      <div>pod template<br><span class="dim">with static config</span></div>
+    </div>
+  </div>
+  <p style="font-size:0.78em; margin-top:14px;">
+    <span class="grn">Per-device routing config depends on which devices are allocated.<br>That's only known after scheduling — too late for the pod template.</span>
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 4b: Template sprawl -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-problem">CHALLENGE 2</span>
+  <h2>Two Bad Options for Sub-Node Allocation</h2>
+  <p style="font-size:0.78em; color:#8b949e;">Different workloads need 1, 2, 4, or 8 GPU-NIC pairs per pod</p>
+  <div class="two-col" style="margin-top:20px; font-size:0.78em;">
+    <div class="box box-red">
+      <p class="red" style="font-weight:600;">Option A: Pre-build templates per size</p>
+      <table style="font-size:0.85em; margin-top:8px;">
+        <tr><th>Size</th><th>Templates</th></tr>
+        <tr><td>1 pair/pod</td><td>8 <span class="dim">(one per rail)</span></td></tr>
+        <tr><td>2 pairs/pod</td><td>4 <span class="dim">(rail0–1, rail2–3, …)</span></td></tr>
+        <tr><td>4 pairs/pod</td><td>2 <span class="dim">(rail0–3, rail4–7)</span></td></tr>
+        <tr><td>8 pairs/pod</td><td>1 <span class="dim">(all rails)</span></td></tr>
+      </table>
+      <p style="margin-top:10px;">
+        <span class="cross">✗</span> &nbsp;15 templates per cluster<br>
+        <span class="cross">✗</span> &nbsp;Workload controller must assign<br>
+        &emsp;&ensp;the right template per replica<br>
+        <span class="cross">✗</span> &nbsp;Pods get pinned to specific rails
+      </p>
+    </div>
+    <div class="box box-orange">
+      <p class="hl" style="font-weight:600;">Option B: Keep 8 base templates (1 per rail)</p>
+      <p style="margin-top:8px;">
+        Pod spec references N of the 8 rail templates.<br>
+        Simpler template set, but:
+      </p>
+      <p style="margin-top:10px;">
+        <span class="cross">✗</span> &nbsp;Workload controller must pick<br>
+        &emsp;&ensp;which rails each replica gets<br>
+        <span class="cross">✗</span> &nbsp;Single pod template can't differentiate —<br>
+        &emsp;&ensp;every replica gets the same rails<br>
+        <span class="cross">✗</span> &nbsp;Added complexity at the workload layer<br>
+        &emsp;&ensp;to handle per-replica rail assignment
+      </p>
+    </div>
+  </div>
+  <p style="font-size:0.78em; margin-top:18px;">
+    <span class="grn">Both options push infrastructure concerns into workload orchestration.</span>
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 5: Challenge 3 -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-problem">CHALLENGE 3</span>
+  <h2>Scheduler Bypass Doesn't Scale</h2>
+  <div class="box box-orange" style="font-size:0.78em; max-width:750px; margin:20px auto;">
+    <p>Prior approach: <a href="https://github.com/openshift-psap/dra-rail-admission-webhook">admission webhook</a> scanned ResourceSlices,<br>picked nodes and devices, pinned pods via <code>nodeAffinity</code></p>
+  </div>
+  <div style="font-size:0.8em; text-align:left; max-width:700px; margin:16px auto;">
+    <p><span class="cross">✗</span> &nbsp;Scheduler doesn't know what the webhook decided</p>
+    <p><span class="cross">✗</span> &nbsp;Can't optimize across workloads — preemption and rebalancing break</p>
+    <p><span class="cross">✗</span> &nbsp;Multi-tenant scheduling can't manage resources it doesn't control</p>
+  </div>
+  <div class="box box-green" style="font-size:0.78em; max-width:700px; margin:24px auto; text-align:center;">
+    <span class="check">✓</span> &nbsp;<strong>Goal:</strong> return device allocation authority to the K8s scheduler
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 6: Solution Overview -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-arch">SOLUTION</span>
+  <h2>Composite DRA Driver</h2>
+  <div class="pipeline" style="margin-top:30px;">
+    <div class="step step-watch"><strong>Watch</strong><br><span style="font-size:0.7em;">underlying<br>ResourceSlices</span></div>
+    <span class="arrow">→</span>
+    <div class="step step-pair"><strong>Pair</strong><br><span style="font-size:0.7em;">by topology<br>constraints</span></div>
+    <span class="arrow">→</span>
+    <div class="step step-pub"><strong>Publish</strong><br><span style="font-size:0.7em;">composite<br>ResourceSlices</span></div>
+    <span class="arrow">→</span>
+    <div class="step step-prep"><strong>Prepare</strong><br><span style="font-size:0.7em;">shadow claims<br>+ gRPC delegate</span></div>
+  </div>
+  <p style="font-size:0.75em; margin-top:24px; color:#8b949e;">
+    The scheduler sees composite devices as normal allocatable resources.<br>
+    No admission webhooks bypassing the scheduler. No side-channel allocation.
+  </p>
+  <div class="box box-green" style="font-size:0.72em; max-width:700px; margin:14px auto; text-align:center;">
+    Config-driven: adding a new underlying driver is a YAML change — zero driver-specific code
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 7: Architecture Diagram -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-arch">ARCHITECTURE</span>
+  <h2>System Overview</h2>
+  <div class="mermaid" style="margin-top:16px;">
+%%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor': '#1f6feb', 'primaryTextColor': '#c9d1d9', 'primaryBorderColor': '#1f6feb', 'lineColor': '#484f58', 'secondaryColor': '#161b22', 'tertiaryColor': '#161b22', 'background': '#0d1117', 'mainBkg': '#161b22', 'nodeBorder': '#30363d', 'clusterBkg': '#161b2200', 'clusterBorder': '#30363d', 'edgeLabelBackground': '#0d1117', 'fontSize': '14px' }}}%%
+flowchart LR
+  subgraph drivers["Underlying Drivers"]
+    GPU["gpu.nvidia.com"]
+    NIC["dra.net"]
+  end
+
+  subgraph api["API Server"]
+    US["Underlying\nResourceSlices"]
+    CS["Composite\nResourceSlices"]
+  end
+
+  subgraph composite["Composite Driver · DaemonSet"]
+    direction TB
+    SYNTH["Synthesizer\nWatch → Pair → Publish"]
+    PLUGIN["Plugin\nShadow claims + gRPC"]
+  end
+
+  subgraph k8s["Kubernetes"]
+    SCHED["Scheduler\nallocates natively"]
+  end
+
+  GPU -->|publish| US
+  NIC -->|publish| US
+  US -->|"informer watch"| SYNTH
+  SYNTH -->|"publish via\nkubeletplugin.Helper"| CS
+  CS -->|read| SCHED
+  SCHED -->|allocation| PLUGIN
+  PLUGIN -->|gRPC| GPU
+  PLUGIN -->|gRPC| NIC
+
+  style GPU fill:#161b22,stroke:#238636,color:#7ee787
+  style NIC fill:#161b22,stroke:#238636,color:#7ee787
+  style SYNTH fill:#161b22,stroke:#1f6feb,color:#58a6ff
+  style PLUGIN fill:#161b22,stroke:#f0883e,color:#ffa657
+  style SCHED fill:#161b22,stroke:#a371f7,color:#d2a8ff
+  style US fill:#161b22,stroke:#238636,color:#7ee787
+  style CS fill:#161b22,stroke:#a371f7,color:#d2a8ff
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 8: Shadow Claims -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-prepare">CORE PATTERN</span>
+  <h2>Shadow Claims: Pure Delegation</h2>
+  <div class="two-col" style="margin-top:20px; font-size:0.78em;">
+    <div class="box box-orange">
+      <p class="hl" style="font-weight:600;">What we do</p>
+      <ul style="font-size:0.9em;">
+        <li>Create <strong>real</strong> ResourceClaims ("shadow claims")</li>
+        <li>Set <code>status.allocation</code> ourselves<br><span class="dim">(normally the scheduler's job)</span></li>
+        <li>Call underlying drivers via gRPC with these claims</li>
+        <li><code>ownerReference</code> → composite claim for GC cascade</li>
+      </ul>
+    </div>
+    <div class="box box-blue">
+      <p class="blu" style="font-weight:600;">What underlying drivers see</p>
+      <ul style="font-size:0.9em;">
+        <li>A normally-allocated ResourceClaim</li>
+        <li><code>kubeletplugin.Helper</code> checks:<br>
+          <span class="check">✓</span> claim exists<br>
+          <span class="check">✓</span> allocation != nil<br>
+          <span class="check">✓</span> UID matches</li>
+        <li><span class="dim">NOT checked:</span> pod.spec presence,<br>allocation provenance</li>
+      </ul>
+    </div>
+  </div>
+  <div class="box box-green" style="font-size:0.72em; max-width:700px; margin:14px auto; text-align:center;">
+    Zero underlying driver code. Pure delegation via the existing DRA API.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 9: User Experience -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-value">USER EXPERIENCE</span>
+  <h2>What the Job Author Writes</h2>
+<pre><code class="language-yaml">apiVersion: batch/v1
+kind: Job
+spec:
+  parallelism: 8
+  completions: 8
+  template:
+    spec:
+      containers:
+      - name: training-worker
+        image: nccl-tests:latest
+        resources:
+          requests:
+            composite.dra.io/gpu-nic-pair: "4"</code></pre>
+  <div class="two-col" style="font-size:0.72em; margin-top:14px;">
+    <div class="box box-green" style="text-align:center;">
+      <span class="grn">K8s 1.36+</span><br>
+      <code>DRAExtendedResource</code> feature gate<br>
+      No webhook needed
+    </div>
+    <div class="box box-blue" style="text-align:center;">
+      <span class="blu">K8s &lt; 1.36</span><br>
+      Mutating webhook fallback<br>
+      Generates ResourceClaimTemplate
+    </div>
+  </div>
+  <p style="font-size:0.72em; margin-top:12px; color:#8b949e;">
+    Same simplicity for Job, JobSet, StatefulSet, or LWS. No per-replica config.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 10: Per-Device Config -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-arch">DESIGN</span>
+  <h2>Per-Device Config at Prepare Time</h2>
+  <p style="font-size:0.75em; color:#8b949e;">Opaque device params resolved via Go templates — not in the pod template</p>
+  <div class="two-col" style="font-size:0.78em;">
+    <div>
+<pre style="font-size:0.7em;"><code class="language-yaml"># GPU params — matched by product name
+gpu.nvidia.com:
+  entries:
+  - match:
+      "nvidia.com/productName":
+        exact: "H100 80GB HBM3"
+    values:
+      ComputeMode: "DEFAULT"
+  params: |
+    {"computeMode": "{{.ComputeMode}}"}</code></pre>
+    </div>
+    <div>
+<pre style="font-size:0.7em;"><code class="language-yaml"># NIC params — matched by IP subnet
+dra-net:
+  entries:
+  - match:
+      "dra.net/ipv4": {prefix: "10.0.0."}
+    values:
+      Gateway: "10.0.0.1"
+      TableID: "100"
+  - match:
+      "dra.net/ipv4": {prefix: "10.0.1."}
+    values:
+      Gateway: "10.0.1.1"
+      TableID: "101"
+  params: |
+    {"gateway": "{{.Gateway}}",
+     "tableID": {{.TableID}}}</code></pre>
+    </div>
+  </div>
+  <div class="box box-green" style="font-size:0.68em; max-width:800px; margin:10px auto; text-align:center;">
+    At Prepare: <code>gpu-2--nic-2</code> → GPU gets <code>{"computeMode":"DEFAULT"}</code>,
+    NIC gets <code>{"gateway":"10.0.2.1","tableID":102}</code><br>
+    Template variables: <code>{{.PairOrdinal}}</code>, <code>{{.NodeName}}</code>,
+    <code>{{device "dra.net/ipv4"}}</code> — per-device config without workload author involvement
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 11: Config, Not Code -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-arch">DESIGN</span>
+  <h2>Config, Not Code</h2>
+<pre><code class="language-yaml">sources:
+  - name: gpu
+    driver: "gpu.nvidia.com"
+    forwardAttributes:
+      - domain: "resource.kubernetes.io"
+        attributes: [pcieRoot]
+  - name: nic
+    driver: "dra.net"
+    forwardAttributes:
+      - domain: "dra.net"
+        attributes: [rdma, ipv4]
+    filter:
+      cel: 'device.attributes["dra.net"].rdma == true'
+
+compositions:
+  - name: "gpu-nic-pair"
+    members: [{source: gpu, count: 1}, {source: nic, count: 1}]
+    constraints:
+      - type: matchAttribute
+        attribute: "resource.kubernetes.io/pcieRoot"</code></pre>
+  <div class="box box-green" style="font-size:0.72em; max-width:600px; margin:12px auto; text-align:center;">
+    Adding a new underlying driver is a YAML change — zero driver-specific code
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 12: Production Use Case -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-value">PRODUCTION</span>
+  <h2>llm-d Inference on IBM Cloud</h2>
+  <div class="box box-blue" style="font-size:0.78em; max-width:800px; margin:20px auto;">
+    <p><strong>Poseidon Cluster</strong> — OCP 4.21 / K8s 1.34 · 4× nodes with 8× H100 GPU + 8× RDMA NIC</p>
+  </div>
+  <div style="font-size:0.78em; text-align:left; max-width:750px; margin:16px auto;">
+    <p><span class="check">✓</span> &nbsp;Auto-pairs by <code>matchAttribute</code> on <code>pcieRoot</code> — 8 composite devices per node</p>
+    <p><span class="check">✓</span> &nbsp;Per-rail RDMA routing config resolved at Prepare time</p>
+    <p><span class="check">✓</span> &nbsp;RDMA bandwidth: <span class="grn">near 400G line rate</span> as expected</p>
+    <p><span class="check">✓</span> &nbsp;8 pairs prepared in <span class="hl">~3s</span> (16 shadow claims, parallel gRPC delegation)</p>
+    <p><span class="check">✓</span> &nbsp;GPUDirect RDMA verified — PIX topology (single PCIe bridge)</p>
+  </div>
+  <p style="font-size:0.75em; margin-top:16px; color:#8b949e;">
+    No per-replica config. No manual pairing. No scheduler bypass.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 13: Observability -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-arch">OBSERVABILITY</span>
+  <h2>Metrics, Events, Structured Logging</h2>
+  <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; font-size:0.72em; margin-top:16px;">
+    <div class="box box-blue">
+      <p class="blu" style="font-weight:600;">Prometheus (16 metrics)</p>
+      <p style="font-size:0.85em; margin-top:6px;">
+        <code>synthesis_devices_total</code><br>
+        <code>claims_active</code><br>
+        <code>prepare_duration_seconds</code><br>
+        <code>grpc_errors_total</code><br>
+        <code>webhook_mutations_total</code><br>
+        <span class="dim">+ 11 more</span>
+      </p>
+      <p style="font-size:0.8em; margin-top:8px; color:#8b949e;">
+        ServiceMonitor CRs included
+      </p>
+    </div>
+    <div class="box box-green">
+      <p class="grn" style="font-weight:600;">Kubernetes Events</p>
+      <p style="font-size:0.85em; margin-top:6px;">
+        <code>PrepareStarted</code> <span class="dim">(Normal)</span><br>
+        <code>PrepareCompleted</code> <span class="dim">(Normal)</span><br>
+        <code>PrepareFailed</code> <span class="dim">(Warning)</span><br>
+        <code>UnprepareCompleted</code> <span class="dim">(Normal)</span>
+      </p>
+      <p style="font-size:0.8em; margin-top:8px; color:#8b949e;">
+        Emitted on ResourceClaims
+      </p>
+    </div>
+    <div class="box box-purple">
+      <p class="pur" style="font-weight:600;">Structured Logging</p>
+      <p style="font-size:0.85em; margin-top:6px;">
+        <code>klog.InfoS</code> / <code>ErrorS</code><br>
+        Key-value pairs:<br>
+        claim, namespace, node,<br>
+        driver, device, composition
+      </p>
+      <p style="font-size:0.8em; margin-top:8px; color:#8b949e;">
+        JSON output for Loki/fluentd
+      </p>
+    </div>
+  </div>
+  <div class="box box-green" style="font-size:0.65em; max-width:800px; margin:10px auto; text-align:center;">
+    <code>histogram_quantile(0.99, sum by (le) (rate(composite_dra_prepare_duration_seconds_bucket[5m])))</code>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 14: WG Feedback Summary -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-feedback">COMMUNITY</span>
+  <h2>What WG Device Management Said</h2>
+  <p style="font-size:0.72em; color:#8b949e; margin-bottom:14px;">Presented June 23, 2026 · <a href="https://github.com/kubernetes-sigs/wg-device-management/issues/54">wg-device-management/issues/54</a> · <a href="https://www.youtube.com/watch?v=V6yZ6zkxhOk&list=PL69nYSiGNLP1kac4zsH0INEWEZlPhOhlp&index=4">recording</a></p>
+  <div style="font-size:0.78em; text-align:left; max-width:800px; margin:0 auto;">
+    <div class="box" style="padding:10px 20px;">
+      <span class="pur" style="font-weight:600;">Shadow claims</span> —
+      "Architecturally sound. DRA drivers don't check pod name or allocation provenance by design. Formalize if widely adopted."
+    </div>
+    <div class="box" style="padding:10px 20px;">
+      <span class="pur" style="font-weight:600;">Virtual ResourceSlices</span> —
+      "Valid extension of the DRA model. Would benefit from provenance metadata for safety."
+    </div>
+    <div class="box" style="padding:10px 20px;">
+      <span class="pur" style="font-weight:600;">Cross-pool exclusion</span> —
+      "Community interest in solving at DRA API level, not just at the driver layer."
+    </div>
+    <div class="box" style="padding:10px 20px;">
+      <span class="pur" style="font-weight:600;">Path forward</span> —
+      Short-term: ship as-is. Medium-term: kubernetes-sigs repo. Long-term: upstream API formalization.
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 15: Scheduling Authority Restored -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-value">VALUE</span>
+  <h2>Scheduling Authority Restored</h2>
+  <div class="grid-2x2" style="margin-top:20px; font-size:0.75em;">
+    <div class="box box-blue">
+      <p class="blu" style="font-weight:600;">Real capacity</p>
+      <p>Composite devices are normal ResourceSlices.<br>
+      The scheduler sees actual availability,<br>not a webhook's guess.</p>
+    </div>
+    <div class="box box-green">
+      <p class="grn" style="font-weight:600;">Placement authority</p>
+      <p>The scheduler makes node decisions —<br>
+      not an admission webhook.<br>
+      Preemption, rebalancing, priorities all work.</p>
+    </div>
+    <div class="box box-purple">
+      <p class="pur" style="font-weight:600;">Workload simplicity</p>
+      <p>Job authors write <code>gpu-nic-pair: 4</code>.<br>
+      No CEL selectors, no cross-driver logic,<br>
+      no topology in pod specs.</p>
+    </div>
+    <div class="box box-orange">
+      <p class="hl" style="font-weight:600;">Driver composability</p>
+      <p>Any DRA drivers composed via config.<br>
+      No new CRDs, no scheduler plugins,<br>
+      no KEPs required.</p>
+    </div>
+  </div>
+  <p style="font-size:0.75em; margin-top:16px; color:#8b949e;">
+    The scheduler does what it's designed to do.<br>The driver handles what belongs at the driver layer.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 16: Project Status -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-arch">STATUS</span>
+  <h2>Project Status</h2>
+  <table style="margin-top:20px;">
+    <tr><th>Component</th><th>Status</th></tr>
+    <tr>
+      <td>Synthesizer (Watch / Pair / Publish)</td>
+      <td><span class="check">✓</span> Complete</td>
+    </tr>
+    <tr>
+      <td>Shadow claims + gRPC delegation</td>
+      <td><span class="check">✓</span> Complete</td>
+    </tr>
+    <tr>
+      <td>Per-device config templates</td>
+      <td><span class="check">✓</span> Complete</td>
+    </tr>
+    <tr>
+      <td>Observability (metrics, events, logging)</td>
+      <td><span class="check">✓</span> Complete</td>
+    </tr>
+    <tr>
+      <td>Template reconciler (GC orphaned claims)</td>
+      <td><span class="check">✓</span> Complete</td>
+    </tr>
+    <tr>
+      <td>CI + nightly builds</td>
+      <td><span class="check">✓</span> Active</td>
+    </tr>
+  </table>
+  <div style="font-size:0.72em; text-align:left; max-width:700px; margin:16px auto;">
+    <p><span class="dim">Known limitations:</span></p>
+    <p style="margin-top:4px;">Discrete devices only (no consumable capacity / grouped mode) — <span class="hl">WIP</span><br>
+    Cross-composition device exclusion tracked, not yet implemented
+    (<a href="https://github.com/openshift-psap/composite-dra-driver/issues/28">#28</a>)</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 17: What's Next -->
+<!-- ============================================================ -->
+<section>
+  <span class="stage-label stage-arch">ROADMAP</span>
+  <h2>What's Next</h2>
+  <div style="font-size:0.8em; text-align:left; max-width:750px; margin:20px auto;">
+    <div class="box" style="padding:12px 20px;">
+      <p><span class="blu" style="font-weight:600;">Cross-composition device exclusion</span><br>
+      <span style="font-size:0.88em;">Same physical device in multiple pools — need mutual exclusion.
+      Exploring DRA API-level vs driver-level solutions.
+      (<a href="https://github.com/openshift-psap/composite-dra-driver/issues/28">#28</a>)</span></p>
+    </div>
+    <div class="box" style="padding:12px 20px;">
+      <p><span class="blu" style="font-weight:600;">Upstream formalization</span><br>
+      <span style="font-size:0.88em;">Shadow claims as a reusable pattern. Derived ResourceSlice provenance.
+      Based on WG Device Management guidance.</span></p>
+    </div>
+    <div class="box" style="padding:12px 20px;">
+      <p><span class="blu" style="font-weight:600;">Broader device combinations</span><br>
+      <span style="font-size:0.88em;">Config-driven design supports any DRA drivers.
+      GPU+NIC is the first use case — storage, FPGA, accelerator compositions are possible.</span></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 18: Summary + Questions -->
+<!-- ============================================================ -->
+<section>
+  <h2>Summary</h2>
+  <div style="font-size:0.82em; text-align:left; max-width:800px; margin:20px auto;">
+    <p style="margin-bottom:16px;">
+      <span class="grn">1.</span> &nbsp;Distributed AI/ML workloads need multi-device allocation (GPU+NIC) with potential per-device config — today this requires per-rail templates or scheduler bypass
+    </p>
+    <p style="margin-bottom:16px;">
+      <span class="grn">2.</span> &nbsp;Composite DRA driver solves this within the <strong>existing DRA API</strong> — config-driven, validated on real hardware, RDMA at near line rate as expected
+    </p>
+    <p style="margin-bottom:16px;">
+      <span class="grn">3.</span> &nbsp;Scheduling authority stays with the scheduler — no bypass, no side-channel, no admission webhook making placement decisions
+    </p>
+  </div>
+  <div style="font-size:0.65em; color:#8b949e; margin-top:30px;">
+    <p><span class="blu">WG Issue:</span> <a href="https://github.com/kubernetes-sigs/wg-device-management/issues/54">kubernetes-sigs/wg-device-management/issues/54</a></p>
+    <p><span class="blu">Architecture:</span> <a href="https://github.com/openshift-psap/composite-dra-driver/blob/main/docs/ARCHITECTURE.md">composite-dra-driver/docs/ARCHITECTURE.md</a></p>
+    <p><span class="blu">Repo:</span> <a href="https://github.com/openshift-psap/composite-dra-driver">github.com/openshift-psap/composite-dra-driver</a></p>
+  </div>
+  <br>
+  <p style="font-size:1.0em;">Questions?</p>
+</section>
+
+</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js-mermaid-plugin/plugin/mermaid/mermaid.js"></script>
+<script>
+Reveal.initialize({
+  hash: true,
+  slideNumber: 'c/t',
+  transition: 'slide',
+  transitionSpeed: 'fast',
+  controlsTutorial: false,
+  progress: true,
+  center: true,
+  width: 1920,
+  height: 1080,
+  plugins: [RevealMermaid],
+});
+</script>
+</body>
+</html>

@@ -33,17 +33,30 @@ jobs:
           role-to-assume: arn:aws:iam::194365112018:role/github-actions-psap-reports-deploy
           aws-region: us-east-1
 
-      - name: Generate index.html and public reports manifest
+      - name: Install AWS CLI
+        run: pip install -q awscli
+
+      - name: Validate report source
+        run: python3 _generator/validate_reports.py
+
+      - name: Publish report artifacts to S3
+        run: python3 _generator/publish_reports.py --paths-file .cloudfront-paths
+
+      - name: Generate index.html and report manifests
         run: python3 _generator/generate_index.py
 
-      - name: Upload manifests to S3
-        if: hashFiles('public-reports.json') != '' || hashFiles('private-entries.json') != ''
+      - name: Upload generated hub artifacts
         run: |
-          pip install -q awscli
           BUCKET=$(python3 -c "import json; print(json.load(open('_generator/s3_config.json'))['bucket'])")
-          [ -f public-reports.json ] && aws s3 cp public-reports.json "s3://${BUCKET}/public-reports.json"
-          [ -f private-entries.json ] && aws s3 cp private-entries.json "s3://${BUCKET}/private-entries.json"
+          if [ -f public-reports.json ]; then aws s3 cp public-reports.json "s3://${BUCKET}/public-reports.json"; else aws s3 rm "s3://${BUCKET}/public-reports.json"; fi
+          if [ -f private-entries.json ]; then aws s3 cp private-entries.json "s3://${BUCKET}/private-entries.json"; else aws s3 rm "s3://${BUCKET}/private-entries.json"; fi
           aws s3 cp index.html "s3://${BUCKET}/admin/index.html" --content-type text/html --cache-control no-store
+
+      - name: Invalidate published CloudFront paths
+        run: |
+          mapfile -t PATHS < .cloudfront-paths
+          PATHS+=(/public-reports.json /private-entries.json /admin/index.html)
+          aws cloudfront create-invalidation --distribution-id E3URYTY8ICV8ON --paths "${PATHS[@]}"
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
