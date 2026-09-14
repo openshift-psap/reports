@@ -137,7 +137,7 @@ async function putJson(key, value) {
   }));
 }
 
-async function listReports(access) {
+async function listReports(access, includeSuperseded = false) {
   const prefix = `report-meta/${access}/`;
   let continuationToken;
   const entries = [];
@@ -149,7 +149,8 @@ async function listReports(access) {
     }
     continuationToken = page.NextContinuationToken;
   } while (continuationToken);
-  return entries.sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
+  return entries.filter(entry => includeSuperseded || entry.isLatest !== false)
+    .sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
 }
 
 async function deleteReportObjects(prefix) {
@@ -165,6 +166,9 @@ async function deleteReportObjects(prefix) {
 function reportEntry(submission) {
   return {
     id: submission.id,
+    reportId: submission.reportId,
+    version: submission.version,
+    isLatest: true,
     title: submission.title,
     description: submission.description,
     tags: submission.tags,
@@ -261,6 +265,13 @@ exports.handler = async (event) => {
     }
     const submission = validateSubmission(parseBody(event.body));
     if (submission.error) return response(400, { error: submission.error }, origin);
+    const parentId = safeString(parseBody(event.body).parentId, 64);
+    let parent;
+    if (parentId) {
+      try { parent = await getJson(`report-meta/${submission.access}/${parentId}.json`); } catch (e) { return response(404, { error: 'Current report not found' }, origin); }
+      if (String(parent.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may update only your own reports' }, origin);
+      if (parent.isLatest === false) return response(409, { error: 'This is no longer the current revision' }, origin);
+    }
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     submission.date = createdAt.slice(0, 10);
@@ -269,6 +280,10 @@ exports.handler = async (event) => {
     const pending = {
       ...submission, id, baseKey, cloudfrontDomain: process.env.CLOUDFRONT_DOMAIN,
       author: authenticated.githubHandle,
+      parentId: parentId || null,
+      parentAccess: parent ? submission.access : null,
+      reportId: parent ? (parent.reportId || parent.id) : id,
+      version: parent ? (Number(parent.version) || 1) + 1 : 1,
       createdAt, expiresAt: new Date(Date.now() + UPLOAD_URL_TTL * 1000).toISOString(),
     };
     await putJson(`report-submissions/${id}.json`, pending);
@@ -295,6 +310,14 @@ exports.handler = async (event) => {
     try { await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: `${pending.baseKey}/index.html` })); }
     catch (error) { return response(400, { error: 'index.html has not been uploaded yet' }, origin); }
     const entry = reportEntry(pending);
+    if (pending.parentId) {
+      const parent = await getJson(`report-meta/${pending.parentAccess}/${pending.parentId}.json`);
+      parent.isLatest = false;
+      parent.reportId = parent.reportId || parent.id;
+      parent.version = parent.version || 1;
+      parent.supersededBy = entry.id;
+      await putJson(`report-meta/${pending.parentAccess}/${pending.parentId}.json`, parent);
+    }
     await putJson(`report-meta/${pending.access}/${id}.json`, entry);
     await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-submissions/${id}.json` }));
     return response(201, { report: entry }, origin);

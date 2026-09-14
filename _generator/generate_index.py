@@ -226,6 +226,7 @@ let accessFilter = null;
 let tagSearchBound = false;
 let authorSearchBound = false;
 let currentGithubHandle = "";
+let updatingReport = null;
 
 function getCategories() { return [...new Set(REPORTS.map(r => r.category))].sort(); }
 function getAllTags() { return [...new Set(REPORTS.flatMap(r => r.tags))].sort(); }
@@ -244,7 +245,7 @@ function rebuildFilters() {
   rebuildTagSearch();
   rebuildAuthorSearch();
   rebuildAccessFilter();
-  rebuildPillFilter("status-filters", ["final", "draft"], statusFilter, v => { statusFilter = v; });
+  rebuildPillFilter("status-filters", ["final", "draft", "archived"], statusFilter, v => { statusFilter = v; });
 }
 
 function rebuildPillFilter(containerId, values, activeValue, setter, hideRowId) {
@@ -267,7 +268,7 @@ function rebuildPillFilter(containerId, values, activeValue, setter, hideRowId) 
 function rebuildPillStates() {
   rebuildPillFilter("category-filters", getCategories(), activeCategory, v => { activeCategory = v; });
   rebuildAccessFilter();
-  rebuildPillFilter("status-filters", ["final", "draft"], statusFilter, v => { statusFilter = v; });
+  rebuildPillFilter("status-filters", ["final", "draft", "archived"], statusFilter, v => { statusFilter = v; });
 }
 
 function rebuildAccessFilter() {
@@ -461,7 +462,7 @@ function render() {
       <div class="card-bottom">
         ${r.tags.map(t => `<span class="card-tag">${escHtml(t)}</span>`).join("")}
         <span class="card-size">${escHtml(r.size)}</span>
-        ${currentGithubHandle && r.author && r.author.toLowerCase() === currentGithubHandle.toLowerCase() ? `${r.status !== 'archived' ? `<button onclick="event.stopPropagation();archiveReport('${escHtml(r.id)}','${r.authenticated ? 'authenticated' : 'public'}','${escHtml(r.title)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer">Archive</button>` : ''}<button onclick="event.stopPropagation();deleteReport('${escHtml(r.id)}','${r.authenticated ? 'authenticated' : 'public'}','${escHtml(r.title)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid #c00;border-radius:4px;font-size:0.7rem;cursor:pointer;color:#c00">Delete</button>` : ""}
+        ${currentGithubHandle && r.author && r.author.toLowerCase() === currentGithubHandle.toLowerCase() ? `<button onclick="event.stopPropagation();updateReport('${escHtml(r.id)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer">Update</button>${r.status !== 'archived' ? `<button onclick="event.stopPropagation();archiveReport('${escHtml(r.id)}','${r.authenticated ? 'authenticated' : 'public'}','${escHtml(r.title)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer">Archive</button>` : ''}<button onclick="event.stopPropagation();deleteReport('${escHtml(r.id)}','${r.authenticated ? 'authenticated' : 'public'}','${escHtml(r.title)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid #c00;border-radius:4px;font-size:0.7rem;cursor:pointer;color:#c00">Delete</button>` : ""}
       </div>
     </div>`;
   }).join("");
@@ -480,6 +481,18 @@ function formatSubmittedTime(report) {
 }
 
 const TOKEN_API = "__TOKEN_API_URL__";
+
+function updateReport(id) {
+  const report = REPORTS.find(item => item.id === id); if (!report) return;
+  updatingReport = report;
+  document.getElementById("report-title").value = report.title;
+  document.getElementById("report-category").value = report.category;
+  document.getElementById("report-access").value = report.authenticated ? "authenticated" : "public";
+  document.getElementById("report-tags").value = (report.tags || []).join(", ");
+  document.getElementById("report-description").value = report.description || "";
+  document.getElementById("report-upload-btn").textContent = `Upload revision ${Number(report.version || 1) + 1}`;
+  document.getElementById("report-upload-form").scrollIntoView({ behavior: "smooth", block: "start" });
+}
 
 async function deleteReport(id, access, title) {
   if (!confirm(`Permanently delete “${title}” and all its files?`)) return;
@@ -608,6 +621,7 @@ function initReportUpload() {
       access: document.getElementById("report-access").value,
       tags: document.getElementById("report-tags").value.split(",").map(tag => tag.trim()).filter(Boolean),
       description: document.getElementById("report-description").value,
+      parentId: updatingReport ? updatingReport.id : undefined,
       files: files.map(({ name, size, contentType }) => ({ name, size, contentType })),
     };
     button.disabled = true;
@@ -630,6 +644,8 @@ function initReportUpload() {
       if (!completeResponse.ok) throw new Error(complete.error || "Could not publish report");
       status.textContent = "Published.";
       form.reset();
+      updatingReport = null;
+      document.getElementById("report-upload-btn").textContent = "Upload report";
       chosenFiles = [];
       document.getElementById("report-author").value = githubHandle;
       await loadPublicEntries(); await loadPrivateEntries();

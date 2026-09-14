@@ -51,6 +51,10 @@ After signing in with GitHub, a **Delete** button appears only on reports attrib
 
 Use **Archive** instead to retire an old or deprecated report without deleting its files. Archived reports remain available through their links and can be found with the status filter, but are clearly marked as archived.
 
+## Update a report
+
+Owners can select **Update** on a current report. The form is pre-filled, and uploading the replacement bundle creates a new immutable revision. The updated revision becomes the card shown in the hub; the prior files and metadata are retained for audit and future version-history presentation.
+
 ### Non-HTML reports
 
 Every submission must include a top-level `index.html`. This is the report landing page and keeps navigation, authorization, and relative assets consistent.
