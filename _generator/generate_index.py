@@ -225,6 +225,7 @@ let statusFilter = null;
 let accessFilter = null;
 let tagSearchBound = false;
 let authorSearchBound = false;
+let currentGithubHandle = "";
 
 function getCategories() { return [...new Set(REPORTS.map(r => r.category))].sort(); }
 function getAllTags() { return [...new Set(REPORTS.flatMap(r => r.tags))].sort(); }
@@ -460,6 +461,7 @@ function render() {
       <div class="card-bottom">
         ${r.tags.map(t => `<span class="card-tag">${escHtml(t)}</span>`).join("")}
         <span class="card-size">${escHtml(r.size)}</span>
+        ${currentGithubHandle && r.author && r.author.toLowerCase() === currentGithubHandle.toLowerCase() ? `${r.status !== 'archived' ? `<button onclick="event.stopPropagation();archiveReport('${escHtml(r.id)}','${r.authenticated ? 'authenticated' : 'public'}','${escHtml(r.title)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer">Archive</button>` : ''}<button onclick="event.stopPropagation();deleteReport('${escHtml(r.id)}','${r.authenticated ? 'authenticated' : 'public'}','${escHtml(r.title)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid #c00;border-radius:4px;font-size:0.7rem;cursor:pointer;color:#c00">Delete</button>` : ""}
       </div>
     </div>`;
   }).join("");
@@ -479,6 +481,26 @@ function formatSubmittedTime(report) {
 
 const TOKEN_API = "__TOKEN_API_URL__";
 
+async function deleteReport(id, access, title) {
+  if (!confirm(`Permanently delete “${title}” and all its files?`)) return;
+  const response = await fetch(`${TOKEN_API}/reports?access=${encodeURIComponent(access)}&id=${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include" });
+  const data = await response.json();
+  if (!response.ok) return alert(data.error || "Could not delete report");
+  const index = REPORTS.findIndex(report => report.id === id);
+  if (index >= 0) REPORTS.splice(index, 1);
+  rebuildFilters(); render();
+}
+
+async function archiveReport(id, access, title) {
+  if (!confirm(`Archive “${title}”? Its files will remain available.`)) return;
+  const response = await fetch(`${TOKEN_API}/reports?access=${encodeURIComponent(access)}&id=${encodeURIComponent(id)}`, { method: "PATCH", credentials: "include" });
+  const data = await response.json();
+  if (!response.ok) return alert(data.error || "Could not archive report");
+  const report = REPORTS.find(item => item.id === id);
+  if (report) Object.assign(report, data.report);
+  rebuildFilters(); render();
+}
+
 async function initAdmin() {
   const panel = document.getElementById("admin-panel");
   if (!TOKEN_API) {
@@ -497,11 +519,13 @@ async function initAdmin() {
     panel.hidden = false;
     document.getElementById("submit-signin").hidden = true;
     const submitter = document.getElementById("report-author");
+    currentGithubHandle = data.githubHandle || "";
     submitter.value = data.githubHandle || "";
     submitter.placeholder = data.githubHandle ? "" : "GitHub sign-in required to submit";
     document.getElementById("report-upload-form").hidden = !data.githubHandle;
     document.getElementById("report-oauth-required").hidden = !!data.githubHandle;
     renderTokenTable(data.tokens);
+    render();
     loadPrivateEntries();
     initReportUpload();
   } catch (e) { return; }

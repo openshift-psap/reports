@@ -45,6 +45,12 @@ An expired or revoked token prevents future sign-ins with it. Browser sessions c
 
 The browser uploads directly to S3 using URLs that expire after 15 minutes. Report content and private report metadata are never committed to this public GitHub repository. A bundle is limited to 100 files and 100 MB.
 
+## Delete a report
+
+After signing in with GitHub, a **Delete** button appears only on reports attributed to your verified GitHub handle. Confirming deletion permanently removes the report metadata and its S3 bundle. This cannot be undone through the hub.
+
+Use **Archive** instead to retire an old or deprecated report without deleting its files. Archived reports remain available through their links and can be found with the status filter, but are clearly marked as archived.
+
 ### Non-HTML reports
 
 Every submission must include a top-level `index.html`. This is the report landing page and keeps navigation, authorization, and relative assets consistent.

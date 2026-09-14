@@ -45,7 +45,7 @@ if ! aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
   aws iam attach-role-policy --role-name "$ROLE_NAME" --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
   sleep 10
 fi
-aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name psap-reports-token-admin-data --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\"],\"Resource\":\"arn:aws:s3:::$S3_BUCKET/tokens.json\"},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\",\"s3:DeleteObject\"],\"Resource\":[\"arn:aws:s3:::$S3_BUCKET/report-meta/*\",\"arn:aws:s3:::$S3_BUCKET/report-submissions/*\",\"arn:aws:s3:::$S3_BUCKET/public/*\",\"arn:aws:s3:::$S3_BUCKET/private/*\"]},{\"Effect\":\"Allow\",\"Action\":\"s3:ListBucket\",\"Resource\":\"arn:aws:s3:::$S3_BUCKET\",\"Condition\":{\"StringLike\":{\"s3:prefix\":[\"report-meta/*\"]}}}]}"
+aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name psap-reports-token-admin-data --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\"],\"Resource\":\"arn:aws:s3:::$S3_BUCKET/tokens.json\"},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\",\"s3:DeleteObject\"],\"Resource\":[\"arn:aws:s3:::$S3_BUCKET/report-meta/*\",\"arn:aws:s3:::$S3_BUCKET/report-submissions/*\",\"arn:aws:s3:::$S3_BUCKET/public/*\",\"arn:aws:s3:::$S3_BUCKET/private/*\"]},{\"Effect\":\"Allow\",\"Action\":\"s3:ListBucket\",\"Resource\":\"arn:aws:s3:::$S3_BUCKET\",\"Condition\":{\"StringLike\":{\"s3:prefix\":[\"report-meta/*\",\"public/*\",\"private/*\"]}}}]}"
 
 echo "=== Create or update Lambda ==="
 ENVIRONMENT="Variables={S3_BUCKET=$S3_BUCKET,S3_REGION=$S3_REGION,COOKIE_SECRET=$COOKIE_SECRET,CLOUDFRONT_DOMAIN=$CF_DOMAIN}"
@@ -92,7 +92,7 @@ COMPLETE_ID=$(aws apigateway get-resources --rest-api-id "$API_ID" --query "item
 if [ -z "$COMPLETE_ID" ] || [ "$COMPLETE_ID" = "None" ]; then
   COMPLETE_ID=$(aws apigateway create-resource --rest-api-id "$API_ID" --parent-id "$REPORT_ID" --path-part complete --query id --output text)
 fi
-for method_resource in "GET:$REPORTS_ID" "POST:$REPORTS_ID" "POST:$COMPLETE_ID"; do
+for method_resource in "GET:$REPORTS_ID" "POST:$REPORTS_ID" "DELETE:$REPORTS_ID" "PATCH:$REPORTS_ID" "POST:$COMPLETE_ID"; do
   method=${method_resource%%:*}
   resource_id=${method_resource#*:}
   if ! aws apigateway get-method --rest-api-id "$API_ID" --resource-id "$resource_id" --http-method "$method" >/dev/null 2>&1; then

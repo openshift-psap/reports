@@ -2,7 +2,7 @@
 
 const {
   S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand,
-  HeadObjectCommand, ListObjectsV2Command,
+  HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand,
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const crypto = require('crypto');
@@ -152,6 +152,16 @@ async function listReports(access) {
   return entries.sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
 }
 
+async function deleteReportObjects(prefix) {
+  let token;
+  do {
+    const page = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix, ContinuationToken: token }));
+    const objects = (page.Contents || []).map(item => ({ Key: item.Key }));
+    if (objects.length) await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: objects, Quiet: true } }));
+    token = page.NextContinuationToken;
+  } while (token);
+}
+
 function reportEntry(submission) {
   return {
     id: submission.id,
@@ -279,6 +289,38 @@ exports.handler = async (event) => {
     await putJson(`report-meta/${pending.access}/${id}.json`, entry);
     await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-submissions/${id}.json` }));
     return response(201, { report: entry }, origin);
+  }
+
+  if (method === 'DELETE' && isReportsPath) {
+    const query = event.queryStringParameters || {};
+    const access = query.access;
+    const id = safeString(query.id, 64);
+    if (!REPORT_ACCESS.has(access) || !/^(legacy-)?[a-f0-9-]+$/.test(id)) return response(400, { error: 'Invalid report identifier' }, origin);
+    if (authenticated.method !== 'github' || !authenticated.githubHandle) return response(403, { error: 'GitHub sign-in required' }, origin);
+    let entry;
+    try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
+    if (String(entry.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may delete only your own reports' }, origin);
+    const prefix = new URL(entry.path).pathname.replace(/^\//, '').replace(/\/index\.html$/, '/');
+    if (!prefix.startsWith(access === 'public' ? 'public/' : 'private/')) return response(400, { error: 'Invalid report storage path' }, origin);
+    await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-meta/${access}/${id}.json` }));
+    await deleteReportObjects(prefix);
+    return response(200, { deleted: id }, origin);
+  }
+
+  // PATCH /reports?access=public&id=... — retain files, mark an owned report archived.
+  if (method === 'PATCH' && isReportsPath) {
+    const query = event.queryStringParameters || {};
+    const access = query.access;
+    const id = safeString(query.id, 64);
+    if (!REPORT_ACCESS.has(access) || !/^(legacy-)?[a-f0-9-]+$/.test(id)) return response(400, { error: 'Invalid report identifier' }, origin);
+    if (authenticated.method !== 'github' || !authenticated.githubHandle) return response(403, { error: 'GitHub sign-in required' }, origin);
+    let entry;
+    try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
+    if (String(entry.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may archive only your own reports' }, origin);
+    entry.status = 'archived';
+    entry.archivedAt = new Date().toISOString();
+    await putJson(`report-meta/${access}/${id}.json`, entry);
+    return response(200, { report: entry }, origin);
   }
 
   // GET /tokens — list tokens (redacted)
