@@ -150,6 +150,8 @@ body{font-family:"Red Hat Text","Helvetica Neue",Arial,sans-serif;background:var
 .site-header .container{display:flex;align-items:center;justify-content:space-between}
 .site-header .brand{color:#fff;font-size:1.3rem;font-weight:700;text-decoration:none;letter-spacing:-0.01em}
 .site-header .brand span{color:#a0a0a0;font-size:0.8rem;font-weight:400;margin-left:0.75rem}
+.manage-link{color:#fff;text-decoration:none;border:1px solid #a0a0a0;border-radius:5px;padding:0.35rem 0.65rem;font-size:0.78rem;font-weight:600}
+.manage-link:hover{border-color:#fff;background:#303030}
 .container{max-width:960px;margin:0 auto;padding:1rem}
 header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;padding:1.5rem 0;border-bottom:1px solid var(--border)}
 header h1{font-size:1.5rem;font-weight:600;display:none}
@@ -197,7 +199,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
 </style>
 </head>
 <body>
-<div class="site-header"><div class="container"><a class="brand" href="#">PSAP<span>Report Hub</span></a></div></div>
+<div class="site-header"><div class="container"><a class="brand" href="#">PSAP<span>Report Hub</span></a><a class="manage-link" href="https://__CLOUDFRONT_DOMAIN__/admin/index.html">Sign in / Manage reports</a></div></div>
 <div class="container">
   <header>
     <h1>PSAP Report Hub</h1>
