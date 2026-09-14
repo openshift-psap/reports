@@ -177,7 +177,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
       <select id="report-access" class="sort-select"><option value="authenticated">Red Hat Internal</option><option value="public">Public</option></select>
       <input id="report-tags" class="search-box" placeholder="Tags, comma-separated" style="width:100%">
       <input id="report-description" class="search-box" placeholder="Short description (optional)" style="grid-column:1 / -1;width:100%">
-      <label style="grid-column:1 / -1;font-size:0.85rem;color:var(--text-secondary)">Choose the report folder (must contain a top-level <code>index.html</code>)<br><input id="report-files" type="file" webkitdirectory multiple required style="margin-top:0.35rem"></label>
+      <label style="grid-column:1 / -1;font-size:0.85rem;color:var(--text-secondary)">Report files (must include a top-level <code>index.html</code>)<br><button id="report-folder-btn" type="button" style="margin-top:0.35rem;padding:0.35rem 0.65rem">Choose folder</button> <span style="font-size:0.8rem">or select one or more files</span><br><input id="report-files" type="file" webkitdirectory directory multiple required style="margin-top:0.35rem"></label>
       <button id="report-upload-btn" type="submit" style="justify-self:start;padding:0.45rem 1rem;background:#EE0000;color:#fff;border:none;border-radius:6px;font-size:0.8rem;font-weight:600;cursor:pointer">Upload report</button>
       <span id="report-upload-status" style="align-self:center;font-size:0.8rem;color:var(--text-secondary)"></span>
     </form>
@@ -564,15 +564,38 @@ function initReportUpload() {
   if (!form || form.dataset.bound) return;
   form.dataset.bound = "true";
   const githubHandle = document.getElementById("report-author").value;
+  let chosenFiles = [];
+  const folderButton = document.getElementById("report-folder-btn");
+  async function readDirectory(handle, prefix = "") {
+    const files = [];
+    for await (const [name, entry] of handle.entries()) {
+      const path = `${prefix}${name}`;
+      if (entry.kind === "file") files.push({ file: await entry.getFile(), name: path });
+      else if (entry.kind === "directory") files.push(...await readDirectory(entry, `${path}/`));
+    }
+    return files;
+  }
+  if (!window.showDirectoryPicker) {
+    folderButton.disabled = true;
+    folderButton.title = "Folder selection is unavailable in this browser; use the file picker below.";
+  } else {
+    folderButton.addEventListener("click", async () => {
+      try {
+        const directory = await window.showDirectoryPicker();
+        chosenFiles = await readDirectory(directory);
+        document.getElementById("report-upload-status").textContent = `${chosenFiles.length} file(s) selected from ${directory.name}.`;
+      } catch (error) { if (error.name !== "AbortError") document.getElementById("report-upload-status").textContent = "Could not read the selected folder."; }
+    });
+  }
   form.addEventListener("submit", async event => {
     event.preventDefault();
     const button = document.getElementById("report-upload-btn");
     const status = document.getElementById("report-upload-status");
-    const files = [...document.getElementById("report-files").files].map(file => ({
-      file,
-      name: file.webkitRelativePath || file.name,
-      size: file.size,
-      contentType: file.type || "application/octet-stream",
+    const files = (chosenFiles.length ? chosenFiles : [...document.getElementById("report-files").files].map(file => ({ file, name: file.webkitRelativePath || file.name }))).map(item => ({
+      file: item.file,
+      name: item.name,
+      size: item.file.size,
+      contentType: item.file.type || "application/octet-stream",
     }));
     const payload = {
       title: document.getElementById("report-title").value,
@@ -602,6 +625,7 @@ function initReportUpload() {
       if (!completeResponse.ok) throw new Error(complete.error || "Could not publish report");
       status.textContent = "Published.";
       form.reset();
+      chosenFiles = [];
       document.getElementById("report-author").value = githubHandle;
       await loadPublicEntries(); await loadPrivateEntries();
     } catch (error) {
