@@ -2,12 +2,13 @@
 """One-time migration of legacy Git-published *public* reports into /public/.
 
 The report files are copied S3-to-S3, so this does not download their content.
-Metadata is read from the current Git HEAD, allowing the script to run after
-the working tree has removed reports/ but before this migration commit is made.
+Metadata is read from the revision before this S3-only migration by default,
+so it remains usable after the working tree has removed reports/.
 """
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = json.loads((ROOT / "_generator" / "s3_config.json").read_text())
+LEGACY_REF = os.environ.get("LEGACY_REF", "HEAD^")
 
 
 def run(*command):
@@ -25,21 +27,21 @@ def run(*command):
 
 def git_file(path):
     result = subprocess.run(
-        ["git", "show", f"HEAD:{path}"], cwd=ROOT, capture_output=True, text=True
+        ["git", "show", f"{LEGACY_REF}:{path}"], cwd=ROOT, capture_output=True, text=True
     )
     if result.returncode:
-        raise RuntimeError(f"Could not read {path} from HEAD: {result.stderr.strip()}")
+        raise RuntimeError(f"Could not read {path} from {LEGACY_REF}: {result.stderr.strip()}")
     return result.stdout
 
 
 def main():
     folders = subprocess.run(
-        ["git", "ls-tree", "-r", "--name-only", "HEAD", "reports"],
+        ["git", "ls-tree", "-r", "--name-only", LEGACY_REF, "reports"],
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout.splitlines()
     meta_files = [item for item in folders if item.endswith("/meta.json")]
     if not meta_files:
-        print("No legacy report metadata found in HEAD.")
+        print(f"No legacy report metadata found in {LEGACY_REF}.")
         return
 
     migrated_paths = []
