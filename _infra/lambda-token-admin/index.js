@@ -200,7 +200,16 @@ function validateSubmission(body) {
     names.add(name); totalBytes += size;
     normalizedFiles.push({ name, size, contentType: safeString(file.contentType, 120) || 'application/octet-stream' });
   }
-  if (!names.has('index.html')) return { error: 'The uploaded folder must contain index.html at its top level' };
+  // Browser directory inputs commonly include the selected folder itself in
+  // every relative path (for example, report/index.html). Strip that one
+  // wrapper while retaining any real nested asset directories.
+  const roots = normalizedFiles.map(file => file.name.split('/')[0]);
+  if (roots.length && roots.every(root => root === roots[0]) && normalizedFiles.every(file => file.name.includes('/'))) {
+    normalizedFiles.forEach(file => { file.name = file.name.substring(file.name.indexOf('/') + 1); });
+  }
+  const outputNames = new Set(normalizedFiles.map(file => file.name));
+  if (outputNames.size !== normalizedFiles.length) return { error: 'Duplicate file names after folder normalization' };
+  if (!outputNames.has('index.html')) return { error: 'The upload must contain index.html at its top level' };
   if (totalBytes > MAX_UPLOAD_BYTES) return { error: 'The report bundle exceeds the 100 MB limit' };
   const tags = Array.isArray(body.tags) ? body.tags.map(tag => safeString(tag, 40)).filter(Boolean).slice(0, 20) : [];
   return {
