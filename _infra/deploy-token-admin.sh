@@ -62,7 +62,9 @@ if [ -z "$TOKENS_ID" ] || [ "$TOKENS_ID" = "None" ]; then
 fi
 INTEGRATION_URI="arn:aws:apigateway:${REGION}:lambda:path/2015-03-31/functions/${FUNCTION_ARN}/invocations"
 for method in GET POST DELETE; do
-  aws apigateway put-method --rest-api-id "$API_ID" --resource-id "$TOKENS_ID" --http-method "$method" --authorization-type NONE --no-api-key-required >/dev/null
+  if ! aws apigateway get-method --rest-api-id "$API_ID" --resource-id "$TOKENS_ID" --http-method "$method" >/dev/null 2>&1; then
+    aws apigateway put-method --rest-api-id "$API_ID" --resource-id "$TOKENS_ID" --http-method "$method" --authorization-type NONE --no-api-key-required >/dev/null
+  fi
   aws apigateway put-integration --rest-api-id "$API_ID" --resource-id "$TOKENS_ID" --http-method "$method" --type AWS_PROXY --integration-http-method POST --uri "$INTEGRATION_URI" >/dev/null
 done
 if ! aws lambda get-policy --function-name "$FUNCTION_NAME" --region "$REGION" --query Policy --output text 2>/dev/null | grep -q 'AllowApiGatewayInvoke'; then

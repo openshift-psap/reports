@@ -258,6 +258,13 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
     <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
       <input type="text" id="token-group" class="search-box" placeholder="Group (e.g. sales, engineering)" style="width:200px;font-size:0.8rem;padding:0.4rem 0.6rem">
       <input type="text" id="token-note" class="search-box" placeholder="Note" style="flex:1;min-width:150px;font-size:0.8rem;padding:0.4rem 0.6rem">
+      <select id="token-lifetime" class="sort-select" title="Token lifetime">
+        <option value="7">Expires in 7 days</option>
+        <option value="30">Expires in 30 days</option>
+        <option value="90">Expires in 90 days</option>
+        <option value="365">Expires in 1 year</option>
+        <option value="0">Long-lived</option>
+      </select>
       <button id="token-generate-btn" style="padding:0.4rem 1rem;background:#EE0000;color:#fff;border:none;border-radius:6px;font-size:0.8rem;font-weight:600;cursor:pointer">Generate Token</button>
     </div>
     <div id="token-result" style="display:none;background:#f0f0f0;border:1px solid #d2d2d2;border-radius:6px;padding:0.75rem 1rem;margin-bottom:1rem;font-family:monospace;font-size:0.8rem;word-break:break-all"></div>
@@ -267,6 +274,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
         <th style="text-align:left;padding:0.4rem;font-size:0.7rem;text-transform:uppercase;color:var(--text-secondary)">Group</th>
         <th style="text-align:left;padding:0.4rem;font-size:0.7rem;text-transform:uppercase;color:var(--text-secondary)">Note</th>
         <th style="text-align:left;padding:0.4rem;font-size:0.7rem;text-transform:uppercase;color:var(--text-secondary)">Created</th>
+        <th style="text-align:left;padding:0.4rem;font-size:0.7rem;text-transform:uppercase;color:var(--text-secondary)">Expires</th>
         <th style="text-align:left;padding:0.4rem;font-size:0.7rem;text-transform:uppercase;color:var(--text-secondary)">Status</th>
         <th style="padding:0.4rem"></th>
       </tr></thead>
@@ -545,19 +553,21 @@ async function initAdmin() {
   document.getElementById("token-generate-btn").addEventListener("click", async () => {
     const group = document.getElementById("token-group").value.trim() || "everyone";
     const note = document.getElementById("token-note").value.trim() || `${group} access`;
+    const lifetimeDays = Number(document.getElementById("token-lifetime").value);
     const btn = document.getElementById("token-generate-btn");
     btn.disabled = true; btn.textContent = "Generating...";
     try {
       const resp = await fetch(`${TOKEN_API}/tokens`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ group, note }),
+        body: JSON.stringify({ group, note, lifetimeDays }),
       });
       const data = await resp.json();
       if (data.token) {
         const result = document.getElementById("token-result");
         result.style.display = "";
-        result.innerHTML = `<strong>New token (${escHtml(group)}):</strong><br>${escHtml(data.token)}<br><br><em>Copy and share with ${escHtml(group)} users. This is the only time it will be shown in full.</em>`;
+        const expiry = data.expires ? `Expires ${escHtml(data.expires.slice(0, 10))}.` : "Long-lived token.";
+        result.innerHTML = `<strong>New token (${escHtml(group)}):</strong><br>${escHtml(data.token)}<br><br><em>${expiry} Copy and share with ${escHtml(group)} users. This is the only time it will be shown in full.</em>`;
         document.getElementById("token-group").value = "";
         document.getElementById("token-note").value = "";
         const listResp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
@@ -576,7 +586,8 @@ function renderTokenTable(tokens) {
     <td style="padding:0.4rem">${escHtml(t.group)}</td>
     <td style="padding:0.4rem">${escHtml(t.note)}</td>
     <td style="padding:0.4rem">${escHtml(t.created)}</td>
-    <td style="padding:0.4rem"><span style="color:${t.active ? 'var(--badge-final)' : 'var(--badge-archived)'}">${t.active ? 'Active' : 'Revoked'}</span></td>
+    <td style="padding:0.4rem">${escHtml(t.expires ? t.expires.slice(0, 10) : "Never")}</td>
+    <td style="padding:0.4rem"><span style="color:${t.active ? 'var(--badge-final)' : 'var(--badge-archived)'}">${t.active ? 'Active' : (t.expires ? 'Expired' : 'Revoked')}</span></td>
     <td style="padding:0.4rem">${t.active ? `<button onclick="revokeToken('${escHtml(t.id)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer;color:var(--text-secondary)">Revoke</button>` : ''}</td>
   </tr>`).join("");
 }

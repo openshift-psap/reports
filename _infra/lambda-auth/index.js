@@ -11,7 +11,8 @@ const CONFIG = {
   requiredOrg: 'openshift-psap',
   cookieName: 'psap_auth',
   cookieSecret: '__COOKIE_SECRET__',
-  cookieMaxAge: 86400 * 7,
+  githubCookieMaxAge: 86400,
+  tokenCookieMaxAge: 86400 * 7,
   s3Bucket: '__S3_BUCKET__',
   s3Region: '__S3_REGION__',
   callbackPath: '/_auth/callback',
@@ -54,6 +55,12 @@ function tokenDigest(token) {
   return `sha256:${crypto.createHash('sha256').update(token).digest('hex')}`;
 }
 
+function tokenIsActive(entry) {
+  if (!entry || entry.active === false || !entry.expires) return entry && entry.active !== false;
+  const expiresAt = entry.expires.includes('T') ? entry.expires : `${entry.expires}T23:59:59.999Z`;
+  return Date.now() <= Date.parse(expiresAt);
+}
+
 async function getTokens() {
   if (CACHE.tokens && Date.now() - CACHE.tokensAt < CACHE_TTL) return CACHE.tokens;
   const data = await fetchS3Json('tokens.json');
@@ -91,8 +98,14 @@ function verifyCookie(signed) {
   const lastDot = signed.lastIndexOf('.');
   if (lastDot < 0) return null;
   const value = signed.substring(0, lastDot);
-  if (signCookie(value) === signed) return value;
-  return null;
+  if (signCookie(value) !== signed) return null;
+
+  const [authenticated, method, issuedAt] = value.split(':');
+  const maxAge = method === 'github' ? CONFIG.githubCookieMaxAge :
+    method === 'token' ? CONFIG.tokenCookieMaxAge : 0;
+  if (authenticated !== 'authenticated' || !maxAge || !/^\d+$/.test(issuedAt || '')) return null;
+  if (Date.now() > Number(issuedAt) + maxAge * 1000) return null;
+  return value;
 }
 
 function parseCookies(headers) {
@@ -106,9 +119,10 @@ function parseCookies(headers) {
   return cookies;
 }
 
-function setAuthCookie(redirectTo) {
-  const expires = new Date(Date.now() + CONFIG.cookieMaxAge * 1000).toUTCString();
-  const cookieValue = signCookie(`authenticated:${Date.now()}`);
+function setAuthCookie(redirectTo, method) {
+  const maxAge = method === 'github' ? CONFIG.githubCookieMaxAge : CONFIG.tokenCookieMaxAge;
+  const expires = new Date(Date.now() + maxAge * 1000).toUTCString();
+  const cookieValue = signCookie(`authenticated:${method}:${Date.now()}`);
   return {
     status: '302',
     statusDescription: 'Found',
@@ -237,14 +251,14 @@ exports.handler = async (event) => {
 
     if (orgRes.statusCode === 204) {
       console.log(JSON.stringify({ event: 'github_auth', method: 'org', user: username }));
-      return setAuthCookie(params.state);
+      return setAuthCookie(params.state, 'github');
     }
 
     // Check allowlist
     const allowlist = await getAllowlist();
     if (allowlist.users && allowlist.users.includes(username)) {
       console.log(JSON.stringify({ event: 'github_auth', method: 'allowlist', user: username }));
-      return setAuthCookie(params.state);
+      return setAuthCookie(params.state, 'github');
     }
 
     return loginPage(params.state, `Access denied: ${username} is not authorized. Reach out to <strong>#forum-psap</strong> on Slack to request access.`);
@@ -259,9 +273,9 @@ exports.handler = async (event) => {
     const tokensData = await getTokens();
     const entry = tokensData.tokens && tokensData.tokens[tokenDigest(submittedToken)];
 
-    if (entry && entry.active !== false) {
+    if (tokenIsActive(entry)) {
       console.log(JSON.stringify({ event: 'token_auth', group: entry.group || 'everyone', path: returnPath }));
-      return setAuthCookie(returnPath);
+      return setAuthCookie(returnPath, 'token');
     }
     return loginPage(returnPath, 'Invalid or revoked access token. Reach out to <strong>#forum-psap</strong> on Slack for a valid token.');
   }

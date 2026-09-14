@@ -29,11 +29,12 @@ All authenticated PSAP members can use the protected admin page to manage tokens
 
 1. Open <https://d3a5l0t7t5dflc.cloudfront.net/admin/index.html> and sign in.
 2. Enter a **Group** (for example, `engineering`) and a descriptive **Note**.
-3. Select **Generate Token**.
-4. Copy the full token immediately and share it only through an approved private channel. The full value is shown once; the service stores only a SHA-256 digest.
-5. To revoke a token, select **Revoke** next to its displayed prefix.
+3. Choose a token lifetime: **7 days** (default), 30 days, 90 days, one year, or **Long-lived**.
+4. Select **Generate Token**.
+5. Copy the full token immediately and share it only through an approved private channel. The full value is shown once; the service stores only a SHA-256 digest.
+6. To revoke a token, select **Revoke** next to its displayed prefix.
 
-Revoking a token prevents future sign-ins with it. Browser sessions created before revocation remain valid until their seven-day expiry.
+An expired or revoked token prevents future sign-ins with it. Browser sessions created before expiry or revocation remain valid until their seven-day expiry.
 
 ## Publish a report
 

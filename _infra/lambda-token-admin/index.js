@@ -7,6 +7,8 @@ const BUCKET = process.env.S3_BUCKET || 'psap-reports';
 const REGION = process.env.S3_REGION || 'us-east-1';
 const COOKIE_SECRET = process.env.COOKIE_SECRET;
 const COOKIE_NAME = 'psap_auth';
+const GITHUB_COOKIE_MAX_AGE = 86400;
+const TOKEN_COOKIE_MAX_AGE = 86400 * 7;
 const TOKEN_PREFIX = 'psap_rht_';
 const TOKEN_LENGTH = 54;
 
@@ -20,6 +22,18 @@ function tokenPrefix(token, info) {
   return info.prefix || token.substring(0, 20);
 }
 
+function tokenIsActive(info) {
+  if (!info || info.active === false) return false;
+  if (!info.expires) return true;
+  const expiresAt = info.expires.includes('T') ? info.expires : `${info.expires}T23:59:59.999Z`;
+  return Date.now() <= Date.parse(expiresAt);
+}
+
+function expirationTimestamp(lifetimeDays) {
+  if (lifetimeDays === 0) return null;
+  return new Date(Date.now() + lifetimeDays * 86400 * 1000).toISOString();
+}
+
 function verifyCookie(signed) {
   if (!signed || !COOKIE_SECRET) return false;
   const lastDot = signed.lastIndexOf('.');
@@ -28,7 +42,12 @@ function verifyCookie(signed) {
   const hmac = crypto.createHmac('sha256', COOKIE_SECRET);
   hmac.update(value);
   const expected = value + '.' + hmac.digest('base64url');
-  return expected === signed;
+  if (expected !== signed) return false;
+  const [authenticated, method, issuedAt] = value.split(':');
+  const maxAge = method === 'github' ? GITHUB_COOKIE_MAX_AGE :
+    method === 'token' ? TOKEN_COOKIE_MAX_AGE : 0;
+  return authenticated === 'authenticated' && maxAge > 0 && /^\d+$/.test(issuedAt || '') &&
+    Date.now() <= Number(issuedAt) + maxAge * 1000;
 }
 
 function parseCookies(cookieHeader) {
@@ -102,7 +121,8 @@ exports.handler = async (event) => {
       group: info.group || 'everyone',
       note: info.note || '',
       created: info.created || '',
-      active: info.active !== false,
+      expires: info.expires || null,
+      active: tokenIsActive(info),
     }));
     return response(200, { tokens: redacted }, origin);
   }
@@ -113,6 +133,10 @@ exports.handler = async (event) => {
     try { body = JSON.parse(event.body || '{}'); } catch (e) {}
     const group = body.group || 'everyone';
     const note = body.note || `${group} access`;
+    const lifetimeDays = body.lifetimeDays === undefined ? 7 : Number(body.lifetimeDays);
+    if (!Number.isInteger(lifetimeDays) || lifetimeDays < 0 || lifetimeDays > 3650) {
+      return response(400, { error: 'lifetimeDays must be an integer from 0 (long-lived) to 3650' }, origin);
+    }
 
     const token = TOKEN_PREFIX + crypto.randomBytes(TOKEN_LENGTH).toString('base64url').substring(0, TOKEN_LENGTH);
     const data = await getTokens();
@@ -121,11 +145,12 @@ exports.handler = async (event) => {
       created: new Date().toISOString().split('T')[0],
       group,
       note,
+      expires: expirationTimestamp(lifetimeDays),
       active: true,
     };
     await putTokens(data);
 
-    return response(201, { token, group, note }, origin);
+    return response(201, { token, group, note, expires: expirationTimestamp(lifetimeDays) }, origin);
   }
 
   // DELETE /tokens — revoke token by prefix
@@ -138,7 +163,7 @@ exports.handler = async (event) => {
     const data = await getTokens();
     let revoked = 0;
     for (const [token, info] of Object.entries(data.tokens)) {
-      if (tokenPrefix(token, info).startsWith(prefix) && info.active !== false) {
+      if (tokenPrefix(token, info).startsWith(prefix) && tokenIsActive(info)) {
         info.active = false;
         revoked++;
       }
