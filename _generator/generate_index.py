@@ -167,7 +167,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
     <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1rem">Report files upload directly to S3. They are not committed to GitHub.</p>
     <form id="report-upload-form" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.65rem;margin-bottom:1.5rem">
       <input id="report-title" class="search-box" placeholder="Report title" required style="width:100%">
-      <input id="report-author" class="search-box" placeholder="Submitter (optional)" style="width:100%">
+      <div style="padding:0.5rem 0.75rem;border:1px solid var(--border);border-radius:6px;color:var(--text-secondary);font-size:0.85rem">Submitter: your verified GitHub handle</div>
       <select id="report-category" class="sort-select"><option value="benchmarks">Benchmarks</option><option value="ci">CI</option><option value="investigations">Investigations</option><option value="presentations">Presentations</option></select>
       <select id="report-access" class="sort-select"><option value="authenticated">PSAP members only</option><option value="public">Public</option></select>
       <input id="report-date" class="search-box" type="date" required style="width:100%">
@@ -536,7 +536,6 @@ function initReportUpload() {
     }));
     const payload = {
       title: document.getElementById("report-title").value,
-      author: document.getElementById("report-author").value,
       category: document.getElementById("report-category").value,
       access: document.getElementById("report-access").value,
       date: document.getElementById("report-date").value,

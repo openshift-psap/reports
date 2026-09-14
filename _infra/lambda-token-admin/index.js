@@ -52,11 +52,12 @@ function verifyCookie(signed) {
   hmac.update(value);
   const expected = value + '.' + hmac.digest('base64url');
   if (expected !== signed) return false;
-  const [authenticated, method, issuedAt] = value.split(':');
+  const [authenticated, method, issuedAt, githubHandle] = value.split(':');
   const maxAge = method === 'github' ? GITHUB_COOKIE_MAX_AGE :
     method === 'token' ? TOKEN_COOKIE_MAX_AGE : 0;
-  return authenticated === 'authenticated' && maxAge > 0 && /^\d+$/.test(issuedAt || '') &&
-    Date.now() <= Number(issuedAt) + maxAge * 1000;
+  if (!(authenticated === 'authenticated' && maxAge > 0 && /^\d+$/.test(issuedAt || '') &&
+    Date.now() <= Number(issuedAt) + maxAge * 1000)) return null;
+  return { method, githubHandle: method === 'github' ? githubHandle || null : null };
 }
 
 function parseCookies(cookieHeader) {
@@ -199,7 +200,7 @@ function validateSubmission(body) {
   const tags = Array.isArray(body.tags) ? body.tags.map(tag => safeString(tag, 40)).filter(Boolean).slice(0, 20) : [];
   return {
     access, category, title, date, slug, files: normalizedFiles, tags,
-    description: safeString(body.description, 1000), author: safeString(body.author, 100),
+    description: safeString(body.description, 1000),
     status: ['draft', 'final', 'archived'].includes(body.status) ? body.status : 'final',
     size: safeString(body.size, 40),
   };
@@ -241,6 +242,9 @@ exports.handler = async (event) => {
 
   // POST /reports — create a short-lived, direct-to-S3 upload plan.
   if (method === 'POST' && isReportsPath) {
+    if (authenticated.method !== 'github' || !authenticated.githubHandle) {
+      return response(403, { error: 'Report submission requires a fresh GitHub sign-in so the submitter can be recorded' }, origin);
+    }
     const submission = validateSubmission(parseBody(event.body));
     if (submission.error) return response(400, { error: submission.error }, origin);
     const id = crypto.randomUUID();
@@ -248,6 +252,7 @@ exports.handler = async (event) => {
     const baseKey = `${submission.access === 'public' ? 'public' : 'private'}/${submission.category}/${submission.date}_${submission.slug}-${suffix}`;
     const pending = {
       ...submission, id, baseKey, cloudfrontDomain: process.env.CLOUDFRONT_DOMAIN,
+      author: authenticated.githubHandle,
       createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + UPLOAD_URL_TTL * 1000).toISOString(),
     };
     await putJson(`report-submissions/${id}.json`, pending);

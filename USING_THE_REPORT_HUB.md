@@ -39,7 +39,7 @@ An expired or revoked token prevents future sign-ins with it. Browser sessions c
 ## Submit a report
 
 1. Open <https://d3a5l0t7t5dflc.cloudfront.net/admin/index.html> and sign in.
-2. Under **Submit a report**, enter the title, category, date, optional submitter/tags/description, and visibility.
+2. Under **Submit a report**, enter the title, category, date, optional tags/description, and visibility. The submitter is automatically recorded as your verified GitHub handle.
 3. Use the file picker to select the complete report folder. It must include `index.html` at its top level; relative assets and subfolders are supported.
 4. Select **Upload report** and leave the page open until it says **Published**.
 

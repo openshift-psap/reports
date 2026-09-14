@@ -9,6 +9,7 @@ so it remains usable after the working tree has removed reports/.
 import hashlib
 import json
 import os
+import argparse
 import subprocess
 import sys
 import tempfile
@@ -17,7 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = json.loads((ROOT / "_generator" / "s3_config.json").read_text())
-LEGACY_REF = os.environ.get("LEGACY_REF", "HEAD^")
+LEGACY_REF = os.environ.get("LEGACY_REF")
 
 
 def run(*command):
@@ -34,7 +35,27 @@ def git_file(path):
     return result.stdout
 
 
+def find_legacy_ref():
+    """Find the newest historical revision that still contains report metadata."""
+    revisions = subprocess.run(
+        ["git", "rev-list", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    for revision in revisions:
+        listing = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", revision, "reports"],
+            cwd=ROOT, capture_output=True, text=True, check=True,
+        ).stdout
+        if "/meta.json" in listing:
+            return revision
+    raise RuntimeError("Could not find a historical reports/ directory; set LEGACY_REF explicitly")
+
+
 def main():
+    global LEGACY_REF
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--author", help="Override the legacy submitter handle for all migrated records")
+    args = parser.parse_args()
+    LEGACY_REF = LEGACY_REF or find_legacy_ref()
     folders = subprocess.run(
         ["git", "ls-tree", "-r", "--name-only", LEGACY_REF, "reports"],
         cwd=ROOT, capture_output=True, text=True, check=True,
@@ -64,7 +85,7 @@ def main():
             "description": meta.get("description", ""),
             "tags": meta.get("tags", []),
             "date": meta.get("date", ""),
-            "author": meta.get("author", ""),
+            "author": args.author or meta.get("author", ""),
             "status": meta.get("status", "final"),
             "category": category,
             "path": f"https://{CONFIG['cloudfront_domain']}/{new_prefix}/index.html",

@@ -100,12 +100,12 @@ function verifyCookie(signed) {
   const value = signed.substring(0, lastDot);
   if (signCookie(value) !== signed) return null;
 
-  const [authenticated, method, issuedAt] = value.split(':');
+  const [authenticated, method, issuedAt, githubHandle] = value.split(':');
   const maxAge = method === 'github' ? CONFIG.githubCookieMaxAge :
     method === 'token' ? CONFIG.tokenCookieMaxAge : 0;
   if (authenticated !== 'authenticated' || !maxAge || !/^\d+$/.test(issuedAt || '')) return null;
   if (Date.now() > Number(issuedAt) + maxAge * 1000) return null;
-  return value;
+  return { method, githubHandle: method === 'github' ? githubHandle || null : null };
 }
 
 function parseCookies(headers) {
@@ -119,10 +119,11 @@ function parseCookies(headers) {
   return cookies;
 }
 
-function setAuthCookie(redirectTo, method) {
+function setAuthCookie(redirectTo, method, githubHandle) {
   const maxAge = method === 'github' ? CONFIG.githubCookieMaxAge : CONFIG.tokenCookieMaxAge;
   const expires = new Date(Date.now() + maxAge * 1000).toUTCString();
-  const cookieValue = signCookie(`authenticated:${method}:${Date.now()}`);
+  const subject = method === 'github' && githubHandle ? `:${githubHandle.toLowerCase()}` : '';
+  const cookieValue = signCookie(`authenticated:${method}:${Date.now()}${subject}`);
   return {
     status: '302',
     statusDescription: 'Found',
@@ -257,14 +258,14 @@ exports.handler = async (event) => {
 
     if (orgRes.statusCode === 204) {
       console.log(JSON.stringify({ event: 'github_auth', method: 'org', user: username }));
-      return setAuthCookie(params.state, 'github');
+      return setAuthCookie(params.state, 'github', username);
     }
 
     // Check allowlist
     const allowlist = await getAllowlist();
     if (allowlist.users && allowlist.users.includes(username)) {
       console.log(JSON.stringify({ event: 'github_auth', method: 'allowlist', user: username }));
-      return setAuthCookie(params.state, 'github');
+      return setAuthCookie(params.state, 'github', username);
     }
 
     return loginPage(params.state, `Access denied: ${username} is not authorized. Reach out to <strong>#forum-psap</strong> on Slack to request access.`);
