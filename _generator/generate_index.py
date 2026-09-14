@@ -591,7 +591,12 @@ function initReportUpload() {
     event.preventDefault();
     const button = document.getElementById("report-upload-btn");
     const status = document.getElementById("report-upload-status");
-    const files = (chosenFiles.length ? chosenFiles : [...document.getElementById("report-files").files].map(file => ({ file, name: file.webkitRelativePath || file.name }))).map(item => ({
+    const selectedFiles = chosenFiles.length ? chosenFiles.map(item => ({ ...item })) : [...document.getElementById("report-files").files].map(file => ({ file, name: file.webkitRelativePath || file.name }));
+    const roots = selectedFiles.map(item => item.name.split("/")[0]);
+    if (roots.length && roots.every(root => root === roots[0]) && selectedFiles.every(item => item.name.includes("/"))) {
+      selectedFiles.forEach(item => { item.name = item.name.substring(item.name.indexOf("/") + 1); });
+    }
+    const files = selectedFiles.map(item => ({
       file: item.file,
       name: item.name,
       size: item.file.size,
