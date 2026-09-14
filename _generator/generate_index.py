@@ -177,7 +177,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
       <select id="report-access" class="sort-select"><option value="authenticated">Red Hat Internal</option><option value="public">Public</option></select>
       <input id="report-tags" class="search-box" placeholder="Tags, comma-separated" style="width:100%">
       <input id="report-description" class="search-box" placeholder="Short description (optional)" style="grid-column:1 / -1;width:100%">
-      <label style="grid-column:1 / -1;font-size:0.85rem;color:var(--text-secondary)">Report files (must include a top-level <code>index.html</code>)<br><button id="report-folder-btn" type="button" style="margin-top:0.35rem;padding:0.35rem 0.65rem">Choose folder</button> <span style="font-size:0.8rem">or select one or more files</span><br><input id="report-files" type="file" webkitdirectory directory multiple required style="margin-top:0.35rem"></label>
+      <label style="grid-column:1 / -1;font-size:0.85rem;color:var(--text-secondary)">Report files (a lone <code>index.html</code> is valid)<br><button id="report-folder-btn" type="button" style="margin-top:0.35rem;padding:0.35rem 0.65rem">Choose folder</button> <span style="font-size:0.8rem">or select one or more files</span><br><input id="report-files" type="file" webkitdirectory directory multiple style="margin-top:0.35rem"></label>
       <button id="report-upload-btn" type="submit" style="justify-self:start;padding:0.45rem 1rem;background:#EE0000;color:#fff;border:none;border-radius:6px;font-size:0.8rem;font-weight:600;cursor:pointer">Upload report</button>
       <span id="report-upload-status" style="align-self:center;font-size:0.8rem;color:var(--text-secondary)"></span>
     </form>
