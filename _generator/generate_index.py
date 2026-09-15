@@ -161,6 +161,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
   </div>
 
   <div class="cards" id="cards"></div>
+  <dialog id="version-history" style="max-width:600px;width:calc(100% - 2rem);border:1px solid var(--border);border-radius:10px;padding:1.5rem"><button onclick="document.getElementById('version-history').close()" style="float:right;border:0;background:none;font-size:1.2rem;cursor:pointer">×</button><h2 id="version-history-title" style="margin-bottom:1rem;font-size:1.1rem">Version history</h2><div id="version-history-list"></div></dialog>
 
   <div id="submit-signin" style="margin-top:2rem;padding:1rem 1.25rem;border:1px solid var(--border);border-radius:8px;background:#f8f8f8;font-size:0.9rem">
     Want to publish a report? <a href="https://__CLOUDFRONT_DOMAIN__/_auth/github?state=/admin/index.html" style="color:#c00;font-weight:600">Sign in with GitHub</a>.
@@ -228,6 +229,7 @@ let accessFilter = null;
 let tagSearchBound = false;
 let authorSearchBound = false;
 let currentGithubHandle = "";
+let isAuthenticated = false;
 let updatingReport = null;
 
 function getCategories() { return [...new Set(REPORTS.map(r => r.category))].sort(); }
@@ -455,6 +457,7 @@ function render() {
           <span class="category-badge">${escHtml(r.category)}</span>
           <span>${escHtml(formatSubmittedTime(r))}</span>
           ${r.author ? `<span>&middot; ${escHtml(r.author)}</span>` : ""}
+          ${isAuthenticated ? `<span>&middot; ID: ${escHtml(r.reportId || r.id)}</span>` : ""}
         </div>
         ${r.authenticated ? '<span class="lock-badge"><svg viewBox="0 0 16 16"><path d="M4 6V4a4 4 0 1 1 8 0v2h1a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h1zm2-2a2 2 0 1 1 4 0v2H6V4z"/></svg>SSO</span>' : ''}
         <span class="status-badge status-${escHtml(r.status)}">${escHtml(r.status)}</span>
@@ -464,6 +467,7 @@ function render() {
       <div class="card-bottom">
         ${r.tags.map(t => `<span class="card-tag">${escHtml(t)}</span>`).join("")}
         <span class="card-size">${escHtml(r.size)}</span>
+        ${r.versionCount > 1 ? `<button onclick="event.stopPropagation();showVersionHistory('${escHtml(r.reportId || r.id)}','${r.authenticated ? 'authenticated' : 'public'}','${escHtml(r.title)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer">Versions (${r.versionCount})</button>` : ""}
         ${currentGithubHandle && r.author && r.author.toLowerCase() === currentGithubHandle.toLowerCase() ? `<button onclick="event.stopPropagation();updateReport('${escHtml(r.id)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer">Update</button>${r.status !== 'archived' ? `<button onclick="event.stopPropagation();archiveReport('${escHtml(r.id)}','${r.authenticated ? 'authenticated' : 'public'}','${escHtml(r.title)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer">Archive</button>` : ''}<button onclick="event.stopPropagation();deleteReport('${escHtml(r.id)}','${r.authenticated ? 'authenticated' : 'public'}','${escHtml(r.title)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid #c00;border-radius:4px;font-size:0.7rem;cursor:pointer;color:#c00">Delete</button>` : ""}
       </div>
     </div>`;
@@ -483,6 +487,15 @@ function formatSubmittedTime(report) {
 }
 
 const TOKEN_API = "__TOKEN_API_URL__";
+
+async function showVersionHistory(reportId, access, title) {
+  const response = await fetch(`${reportsApiUrl(access)}&history=1&reportId=${encodeURIComponent(reportId)}`, { credentials: "include" });
+  const data = await response.json();
+  if (!response.ok) return alert(data.error || "Could not load version history");
+  document.getElementById("version-history-title").textContent = `Version history — ${title}`;
+  document.getElementById("version-history-list").innerHTML = data.reports.sort((a,b) => Number(b.version) - Number(a.version)).map(report => `<div style="padding:.7rem 0;border-top:1px solid #d2d2d2"><strong>Version ${escHtml(report.version)}</strong>${report.isLatest !== false ? " · Current" : ""}<br><span style="font-size:.85rem;color:#6a6e73">${escHtml(formatSubmittedTime(report))} · ${escHtml(report.author || "")}</span><br><a href="${escHtml(report.path)}" target="_blank" rel="noopener" style="color:#c00">Open this version</a></div>`).join("");
+  document.getElementById("version-history").showModal();
+}
 
 function updateReport(id) {
   const report = REPORTS.find(item => item.id === id); if (!report) return;
@@ -531,6 +544,7 @@ async function initAdmin() {
     const resp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
     if (!resp.ok) return;
     const data = await resp.json();
+    isAuthenticated = true;
     panel.hidden = false;
     document.getElementById("submit-signin").hidden = true;
     const submitter = document.getElementById("report-author");

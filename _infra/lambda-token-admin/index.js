@@ -171,7 +171,10 @@ async function listReports(access, includeSuperseded = false) {
     }
     continuationToken = page.NextContinuationToken;
   } while (continuationToken);
+  const counts = new Map();
+  entries.forEach(entry => { const id = entry.reportId || entry.id; counts.set(id, (counts.get(id) || 0) + 1); });
   return entries.filter(entry => includeSuperseded || entry.isLatest !== false)
+    .map(entry => ({ ...entry, reportId: entry.reportId || entry.id, version: entry.version || 1, versionCount: counts.get(entry.reportId || entry.id) || 1 }))
     .sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
 }
 
@@ -277,7 +280,10 @@ exports.handler = async (event) => {
   // The public index is intentionally readable without a browser session.
   // Private metadata is never returned through this branch.
   if (method === 'GET' && isReportsPath && (event.queryStringParameters || {}).access === 'public') {
-    return response(200, { reports: await listReports('public') }, origin);
+    const query = event.queryStringParameters || {};
+    let reports = await listReports('public', query.history === '1');
+    if (query.reportId) reports = reports.filter(entry => entry.reportId === query.reportId);
+    return response(200, { reports }, origin);
   }
 
   if (!authenticated && (isReportsPath || reportMatch)) authenticated = await cliPrincipal(requestHeaders);
@@ -289,9 +295,12 @@ exports.handler = async (event) => {
 
   // GET /reports?access=authenticated — list private report metadata.
   if (method === 'GET' && isReportsPath) {
-    const access = (event.queryStringParameters || {}).access;
+    const query = event.queryStringParameters || {};
+    const access = query.access;
     if (access !== 'authenticated') return response(400, { error: 'access must be authenticated' }, origin);
-    return response(200, { reports: await listReports(access) }, origin);
+    let reports = await listReports(access, query.history === '1');
+    if (query.reportId) reports = reports.filter(entry => entry.reportId === query.reportId);
+    return response(200, { reports }, origin);
   }
 
   // POST /reports — create a short-lived, direct-to-S3 upload plan.

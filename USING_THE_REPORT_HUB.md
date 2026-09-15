@@ -76,6 +76,8 @@ Use **Archive** instead to retire an old or deprecated report without deleting i
 
 Owners can select **Update** on a current report. The form is pre-filled, and uploading the replacement bundle creates a new immutable revision. The updated revision becomes the card shown in the hub; the prior files and metadata are retained for audit and future version-history presentation.
 
+When a report has more than one revision, its card shows **Versions**. The dialog lists every retained revision and provides a direct link to each one. Authenticated users also see the stable report ID on cards; use it when referring to a report in automation or support requests.
+
 ### Non-HTML reports
 
 Every submission must include a top-level `index.html`. This is the report landing page and keeps navigation, authorization, and relative assets consistent.
