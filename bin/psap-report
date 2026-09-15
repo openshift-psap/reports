@@ -53,7 +53,7 @@ def main():
     parser.add_argument("--login", action="store_true", help="Authenticate with GitHub Device Flow")
     args = parser.parse_args()
     token = get_token(args.login)
-    if args.login and not args.directory: return
+    if args.login and not args.source: return
     if not args.source or not args.title or not args.category: raise SystemExit("source, --title, and --category are required for upload")
     source = args.source.resolve()
     if source.is_file():
