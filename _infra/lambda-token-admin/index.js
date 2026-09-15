@@ -273,7 +273,7 @@ exports.handler = async (event) => {
     return response(200, { reports: await listReports('public') }, origin);
   }
 
-  if (!authenticated && isReportsPath) authenticated = await cliPrincipal(requestHeaders);
+  if (!authenticated && (isReportsPath || reportMatch)) authenticated = await cliPrincipal(requestHeaders);
   if (!authenticated) {
     return response(401, { error: 'Not authenticated' }, origin);
   }
