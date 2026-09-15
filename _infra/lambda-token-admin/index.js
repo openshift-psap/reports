@@ -289,7 +289,7 @@ exports.handler = async (event) => {
 
   // POST /reports — create a short-lived, direct-to-S3 upload plan.
   if (method === 'POST' && isReportsPath) {
-    if (authenticated.method !== 'github' || !authenticated.githubHandle) {
+    if (!authenticated.githubHandle) {
       return response(403, { error: 'Report submission requires a fresh GitHub sign-in so the submitter can be recorded' }, origin);
     }
     const submission = validateSubmission(parseBody(event.body));
@@ -357,7 +357,7 @@ exports.handler = async (event) => {
     const access = query.access;
     const id = safeString(query.id, 64);
     if (!REPORT_ACCESS.has(access) || !/^(legacy-)?[a-f0-9-]+$/.test(id)) return response(400, { error: 'Invalid report identifier' }, origin);
-    if (authenticated.method !== 'github' || !authenticated.githubHandle) return response(403, { error: 'GitHub sign-in required' }, origin);
+    if (!authenticated.githubHandle) return response(403, { error: 'GitHub sign-in required' }, origin);
     let entry;
     try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
     if (String(entry.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may delete only your own reports' }, origin);
@@ -374,7 +374,7 @@ exports.handler = async (event) => {
     const access = query.access;
     const id = safeString(query.id, 64);
     if (!REPORT_ACCESS.has(access) || !/^(legacy-)?[a-f0-9-]+$/.test(id)) return response(400, { error: 'Invalid report identifier' }, origin);
-    if (authenticated.method !== 'github' || !authenticated.githubHandle) return response(403, { error: 'GitHub sign-in required' }, origin);
+    if (!authenticated.githubHandle) return response(403, { error: 'GitHub sign-in required' }, origin);
     let entry;
     try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
     if (String(entry.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may archive only your own reports' }, origin);
