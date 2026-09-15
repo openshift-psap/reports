@@ -177,7 +177,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
       <select id="report-access" class="sort-select"><option value="authenticated">Red Hat Internal</option><option value="public">Public</option></select>
       <input id="report-tags" class="search-box" placeholder="Tags, comma-separated" style="width:100%">
       <input id="report-description" class="search-box" placeholder="Short description (optional)" style="grid-column:1 / -1;width:100%">
-      <label style="grid-column:1 / -1;font-size:0.85rem;color:var(--text-secondary)">Report HTML file<br><input id="report-files" type="file" accept="text/html,.html,.htm" style="margin-top:0.35rem"><br><span style="font-size:0.8rem">For a report with assets or multiple files, use the CLI uploader.</span></label>
+      <label style="grid-column:1 / -1;font-size:0.85rem;color:var(--text-secondary)">Report HTML file<br><input id="report-files" type="file" accept="text/html,.html,.htm" style="margin-top:0.35rem"><br><span style="font-size:0.8rem">Any HTML filename is accepted. For assets or multiple files, use the CLI uploader.</span></label>
       <button id="report-upload-btn" type="submit" style="justify-self:start;padding:0.45rem 1rem;background:#EE0000;color:#fff;border:none;border-radius:6px;font-size:0.8rem;font-weight:600;cursor:pointer">Upload report</button>
       <span id="report-upload-status" style="align-self:center;font-size:0.8rem;color:var(--text-secondary)"></span>
     </form>
@@ -581,13 +581,14 @@ function initReportUpload() {
     event.preventDefault();
     const button = document.getElementById("report-upload-btn");
     const status = document.getElementById("report-upload-status");
-    const files = [...document.getElementById("report-files").files].map(file => ({ file, name: "index.html", size: file.size, contentType: file.type || "text/html" }));
+    const files = [...document.getElementById("report-files").files].map(file => ({ file, name: file.name, size: file.size, contentType: file.type || "text/html" }));
     const payload = {
       title: document.getElementById("report-title").value,
       category: document.getElementById("report-category").value,
       access: document.getElementById("report-access").value,
       tags: document.getElementById("report-tags").value.split(",").map(tag => tag.trim()).filter(Boolean),
       description: document.getElementById("report-description").value,
+      entryFile: files[0] && files[0].name,
       parentId: updatingReport ? updatingReport.id : undefined,
       files: files.map(({ name, size, contentType }) => ({ name, size, contentType })),
     };

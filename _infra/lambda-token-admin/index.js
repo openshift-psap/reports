@@ -177,7 +177,7 @@ function reportEntry(submission) {
     author: submission.author,
     status: submission.status,
     category: submission.category,
-    path: `https://${submission.cloudfrontDomain}/${submission.baseKey}/index.html`,
+    path: `https://${submission.cloudfrontDomain}/${submission.baseKey}/${submission.entryFile}`,
     size: submission.size || '—',
     authenticated: submission.access === 'authenticated',
   };
@@ -213,11 +213,17 @@ function validateSubmission(body) {
   }
   const outputNames = new Set(normalizedFiles.map(file => file.name));
   if (outputNames.size !== normalizedFiles.length) return { error: 'Duplicate file names after folder normalization' };
-  if (!outputNames.has('index.html')) return { error: 'The upload must contain index.html at its top level' };
+  let entryFile = safeFileName(body.entryFile);
+  if (!entryFile) {
+    const htmlFiles = normalizedFiles.filter(file => /\.html?$/i.test(file.name));
+    if (htmlFiles.length !== 1) return { error: 'Specify entryFile when the bundle has zero or multiple HTML files' };
+    entryFile = htmlFiles[0].name;
+  }
+  if (!outputNames.has(entryFile)) return { error: 'entryFile must be one of the uploaded files' };
   if (totalBytes > MAX_UPLOAD_BYTES) return { error: 'The report bundle exceeds the 100 MB limit' };
   const tags = Array.isArray(body.tags) ? body.tags.map(tag => safeString(tag, 40)).filter(Boolean).slice(0, 20) : [];
   return {
-    access, category, title, slug, files: normalizedFiles, tags,
+    access, category, title, slug, files: normalizedFiles, entryFile, tags,
     description: safeString(body.description, 1000),
     status: ['draft', 'final', 'archived'].includes(body.status) ? body.status : 'final',
     size: safeString(body.size, 40),
@@ -307,8 +313,8 @@ exports.handler = async (event) => {
       await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-submissions/${id}.json` }));
       return response(410, { error: 'Upload plan expired; start again' }, origin);
     }
-    try { await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: `${pending.baseKey}/index.html` })); }
-    catch (error) { return response(400, { error: 'index.html has not been uploaded yet' }, origin); }
+    try { await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: `${pending.baseKey}/${pending.entryFile}` })); }
+    catch (error) { return response(400, { error: 'The selected HTML entry file has not been uploaded yet' }, origin); }
     const entry = reportEntry(pending);
     if (pending.parentId) {
       const parent = await getJson(`report-meta/${pending.parentAccess}/${pending.parentId}.json`);
@@ -332,7 +338,7 @@ exports.handler = async (event) => {
     let entry;
     try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
     if (String(entry.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may delete only your own reports' }, origin);
-    const prefix = new URL(entry.path).pathname.replace(/^\//, '').replace(/\/index\.html$/, '/');
+    const prefix = new URL(entry.path).pathname.replace(/^\//, '').replace(/\/[^/]+$/, '/');
     if (!prefix.startsWith(access === 'public' ? 'public/' : 'private/')) return response(400, { error: 'Invalid report storage path' }, origin);
     await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-meta/${access}/${id}.json` }));
     await deleteReportObjects(prefix);
