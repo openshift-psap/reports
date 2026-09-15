@@ -45,6 +45,23 @@ An expired or revoked token prevents future sign-ins with it. Browser sessions c
 
 The browser uploads directly to S3 using URLs that expire after 15 minutes. Report content and private report metadata are never committed to this public GitHub repository.
 
+### CLI upload for automation and multi-file reports
+
+The CLI is the preferred uploader for report directories with assets, agent workflows, and CI automation. It uses GitHub OAuth Device Flow, verifies `openshift-psap` membership, and records the authenticated GitHub handle as submitter.
+
+```bash
+./bin/psap-report --login
+./bin/psap-report ./rendered-report \
+  --entry-file report.html \
+  --title "Inference benchmark" \
+  --category benchmarks \
+  --access internal \
+  --tags "llm-d,gpu" \
+  --description "Automated benchmark report"
+```
+
+Authentication is stored locally at `~/.config/psap-report/github-oauth.json` with owner-only permissions. Re-run `--login` to authenticate a different GitHub account.
+
 ## Delete a report
 
 After signing in with GitHub, a **Delete** button appears only on reports attributed to your verified GitHub handle. Confirming deletion permanently removes the report metadata and its S3 bundle. This cannot be undone through the hub.

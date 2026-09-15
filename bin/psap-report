@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Upload PSAP report bundles using GitHub OAuth Device Flow."""
+import argparse, json, mimetypes, os, sys, time
+from pathlib import Path
+from urllib.request import Request, urlopen
+from urllib.parse import urlencode
+from urllib.error import HTTPError
+
+ROOT = Path(__file__).resolve().parents[1]
+CONFIG = json.loads((ROOT / "_generator" / "s3_config.json").read_text())
+API = CONFIG["cli_report_api_url"]
+CLIENT_ID = CONFIG["github_client_id"]
+TOKEN_FILE = Path.home() / ".config" / "psap-report" / "github-oauth.json"
+
+def device_login():
+    body = urlencode({"client_id": CLIENT_ID, "scope": "read:org"}).encode()
+    response = urlopen(Request("https://github.com/login/device/code", data=body, headers={"Accept": "application/json"}), timeout=30)
+    device = json.loads(response.read())
+    print(f"Open {device['verification_uri']} and enter code: {device['user_code']}")
+    while True:
+        time.sleep(device.get("interval", 5))
+        poll = urlencode({"client_id": CLIENT_ID, "device_code": device["device_code"], "grant_type": "urn:ietf:params:oauth:grant-type:device_code"}).encode()
+        result = json.loads(urlopen(Request("https://github.com/login/oauth/access_token", data=poll, headers={"Accept": "application/json"}), timeout=30).read())
+        if result.get("access_token"):
+            TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True); TOKEN_FILE.write_text(json.dumps(result)); TOKEN_FILE.chmod(0o600)
+            print("GitHub authentication saved."); return result["access_token"]
+        if result.get("error") not in ("authorization_pending", "slow_down"): raise SystemExit(result.get("error_description", result.get("error")))
+
+def get_token(login=False):
+    if login or not TOKEN_FILE.exists(): return device_login()
+    return json.loads(TOKEN_FILE.read_text())["access_token"]
+
+def request(url, method="GET", data=None, token=None):
+    headers = {"Content-Type": "application/json"} if data is not None else {}
+    if token: headers["Authorization"] = f"Bearer {token}"
+    body = json.dumps(data).encode() if data is not None else None
+    try:
+        with urlopen(Request(url, data=body, method=method, headers=headers), timeout=60) as response:
+            return json.loads(response.read())
+    except HTTPError as error:
+        detail = error.read().decode()
+        try: detail = json.loads(detail).get("error", detail)
+        except json.JSONDecodeError: pass
+        raise SystemExit(f"API error ({error.code}): {detail}")
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("directory", type=Path, nargs="?")
+    parser.add_argument("--entry-file", required=True, help="HTML entry path relative to directory")
+    parser.add_argument("--title"); parser.add_argument("--category", choices=["benchmarks", "ci", "investigations", "presentations"])
+    parser.add_argument("--access", choices=["public", "internal"], default="internal")
+    parser.add_argument("--tags", default=""); parser.add_argument("--description", default="")
+    parser.add_argument("--login", action="store_true", help="Authenticate with GitHub Device Flow")
+    args = parser.parse_args()
+    token = get_token(args.login)
+    if args.login and not args.directory: return
+    if not args.directory or not args.title or not args.category: raise SystemExit("directory, --title, and --category are required for upload")
+    root = args.directory.resolve(); entry = args.entry_file.replace("\\", "/")
+    files = [path for path in root.rglob("*") if path.is_file()]
+    relative = {path.relative_to(root).as_posix(): path for path in files}
+    if entry not in relative: raise SystemExit(f"Entry file not found: {entry}")
+    payload = {"title": args.title, "category": args.category, "access": "authenticated" if args.access == "internal" else "public", "tags": [tag.strip() for tag in args.tags.split(",") if tag.strip()], "description": args.description, "entryFile": entry, "files": [{"name": name, "size": path.stat().st_size, "contentType": mimetypes.guess_type(name)[0] or "application/octet-stream"} for name, path in relative.items()]}
+    plan = request(f"{API}/reports", "POST", payload, token)
+    for target in plan["uploads"]:
+        path = relative[target["name"]]
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        with path.open("rb") as handle:
+            urlopen(Request(target["url"], data=handle.read(), method="PUT", headers={"Content-Type": content_type, "Cache-Control": "no-cache"}), timeout=300).read()
+        print(f"Uploaded {target['name']}")
+    result = request(f"{API}/reports/{plan['id']}/complete", "POST", {}, token)
+    print(result["report"]["path"])
+
+if __name__ == "__main__": main()

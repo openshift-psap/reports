@@ -6,6 +6,7 @@ const {
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const crypto = require('crypto');
+const https = require('https');
 
 const BUCKET = process.env.S3_BUCKET || 'psap-reports';
 const REGION = process.env.S3_REGION || 'us-east-1';
@@ -123,6 +124,27 @@ function safeFileName(value) {
 
 function parseBody(raw) {
   try { return JSON.parse(raw || '{}'); } catch (e) { return {}; }
+}
+
+function githubRequest(path, token) {
+  return new Promise((resolve, reject) => {
+    const request = https.request({ hostname: 'api.github.com', path, method: 'GET', headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'psap-reports-cli', Accept: 'application/json' } }, response => {
+      let body = ''; response.on('data', chunk => body += chunk);
+      response.on('end', () => { try { resolve({ status: response.statusCode, body: JSON.parse(body) }); } catch (e) { resolve({ status: response.statusCode, body: {} }); } });
+    });
+    request.on('error', reject); request.end();
+  });
+}
+
+async function cliPrincipal(headers) {
+  const authorization = headers.authorization || headers.Authorization || '';
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  if (!match) return null;
+  const token = match[1];
+  const user = await githubRequest('/user', token);
+  if (user.status !== 200 || !user.body.login) return null;
+  const member = await githubRequest(`/orgs/openshift-psap/members/${encodeURIComponent(user.body.login)}`, token);
+  return member.status === 204 ? { method: 'github-cli', githubHandle: user.body.login.toLowerCase() } : null;
 }
 
 async function getJson(key) {
@@ -243,7 +265,7 @@ exports.handler = async (event) => {
   const reportMatch = path.match(/\/reports\/([a-f0-9-]+)\/complete$/);
   const requestHeaders = event.headers || {};
   const cookies = parseCookies(requestHeaders.cookie || requestHeaders.Cookie);
-  const authenticated = verifyCookie(cookies[COOKIE_NAME]);
+  let authenticated = verifyCookie(cookies[COOKIE_NAME]);
 
   // The public index is intentionally readable without a browser session.
   // Private metadata is never returned through this branch.
@@ -251,6 +273,7 @@ exports.handler = async (event) => {
     return response(200, { reports: await listReports('public') }, origin);
   }
 
+  if (!authenticated && isReportsPath) authenticated = await cliPrincipal(requestHeaders);
   if (!authenticated) {
     return response(401, { error: 'Not authenticated' }, origin);
   }

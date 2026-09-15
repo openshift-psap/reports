@@ -2,5 +2,7 @@
   "bucket": "psap-reports",
   "region": "us-east-1",
   "cloudfront_domain": "d3a5l0t7t5dflc.cloudfront.net",
-  "token_api_url": "/_admin-api"
+  "token_api_url": "/_admin-api",
+  "cli_report_api_url": "https://s3xe2w49g5.execute-api.us-east-1.amazonaws.com/prod/_admin-api",
+  "github_client_id": "Ov23liZsUwwrXocmHHcs"
 }
