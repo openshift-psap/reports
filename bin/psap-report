@@ -45,7 +45,7 @@ def request(url, method="GET", data=None, token=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("directory", type=Path, nargs="?")
+    parser.add_argument("source", type=Path, nargs="?", help="HTML file or report directory")
     parser.add_argument("--entry-file", help="HTML entry path relative to directory")
     parser.add_argument("--title"); parser.add_argument("--category", choices=["benchmarks", "ci", "investigations", "presentations"])
     parser.add_argument("--access", choices=["public", "internal"], default="internal")
@@ -54,10 +54,19 @@ def main():
     args = parser.parse_args()
     token = get_token(args.login)
     if args.login and not args.directory: return
-    if not args.directory or not args.title or not args.category or not args.entry_file: raise SystemExit("directory, --entry-file, --title, and --category are required for upload")
-    root = args.directory.resolve(); entry = args.entry_file.replace("\\", "/")
-    files = [path for path in root.rglob("*") if path.is_file()]
-    relative = {path.relative_to(root).as_posix(): path for path in files}
+    if not args.source or not args.title or not args.category: raise SystemExit("source, --title, and --category are required for upload")
+    source = args.source.resolve()
+    if source.is_file():
+        if source.suffix.lower() not in (".html", ".htm"): raise SystemExit("Single-file uploads must be HTML files")
+        entry = source.name
+        if args.entry_file and args.entry_file.replace("\\", "/") != entry: raise SystemExit("--entry-file must match the supplied HTML filename")
+        relative = {entry: source}
+    elif source.is_dir():
+        if not args.entry_file: raise SystemExit("--entry-file is required when uploading a directory")
+        root = source; entry = args.entry_file.replace("\\", "/")
+        files = [path for path in root.rglob("*") if path.is_file()]
+        relative = {path.relative_to(root).as_posix(): path for path in files}
+    else: raise SystemExit(f"Source not found: {source}")
     if entry not in relative: raise SystemExit(f"Entry file not found: {entry}")
     payload = {"title": args.title, "category": args.category, "access": "authenticated" if args.access == "internal" else "public", "tags": [tag.strip() for tag in args.tags.split(",") if tag.strip()], "description": args.description, "entryFile": entry, "files": [{"name": name, "size": path.stat().st_size, "contentType": mimetypes.guess_type(name)[0] or "application/octet-stream"} for name, path in relative.items()]}
     plan = request(f"{API}/reports", "POST", payload, token)

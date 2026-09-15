@@ -51,6 +51,8 @@ The CLI is the preferred uploader for report directories with assets, agent work
 
 ```bash
 ./bin/psap-report --login
+./bin/psap-report ./standalone-report.html \
+  --title "Standalone report" --category investigations
 ./bin/psap-report ./rendered-report \
   --entry-file report.html \
   --title "Inference benchmark" \
