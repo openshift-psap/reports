@@ -45,6 +45,8 @@ An expired or revoked token prevents future sign-ins with it. Browser sessions c
 
 The browser uploads directly to S3 using URLs that expire after 15 minutes. Report content and private report metadata are never committed to this public GitHub repository.
 
+Choose **External HTTPS link** instead of Upload HTML to index a report hosted elsewhere. An entry is either one external HTTPS URL or uploaded report content—never both.
+
 ### CLI upload for automation and multi-file reports
 
 The CLI is the preferred uploader for report directories with assets, agent workflows, and CI automation. It uses GitHub OAuth Device Flow, verifies `openshift-psap` membership, and records the authenticated GitHub handle as submitter.

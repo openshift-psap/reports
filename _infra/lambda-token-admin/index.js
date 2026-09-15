@@ -199,7 +199,8 @@ function reportEntry(submission) {
     author: submission.author,
     status: submission.status,
     category: submission.category,
-    path: `https://${submission.cloudfrontDomain}/${submission.baseKey}/${submission.entryFile}`,
+    path: submission.externalUrl || `https://${submission.cloudfrontDomain}/${submission.baseKey}/${submission.entryFile}`,
+    externalUrl: submission.externalUrl || null,
     size: submission.size || '—',
     authenticated: submission.access === 'authenticated',
   };
@@ -211,11 +212,17 @@ function validateSubmission(body) {
   const title = safeString(body.title, 180);
   const slug = safeSlug(body.slug || title);
   const files = Array.isArray(body.files) ? body.files : [];
+  const externalUrl = safeString(body.externalUrl, 2000);
   if (!REPORT_ACCESS.has(access)) return { error: 'access must be public or authenticated' };
   if (!REPORT_CATEGORIES.has(category)) return { error: 'Choose a supported category' };
   if (!title) return { error: 'A report title is required' };
   if (!slug) return { error: 'A URL slug or title containing letters/numbers is required' };
-  if (!files.length || files.length > MAX_UPLOAD_FILES) return { error: `Choose 1–${MAX_UPLOAD_FILES} files, including index.html` };
+  if (externalUrl) {
+    try { if (new URL(externalUrl).protocol !== 'https:') throw new Error(); } catch (e) { return { error: 'External URL must be a valid HTTPS URL' }; }
+    if (files.length) return { error: 'An external-link report cannot include uploaded files' };
+    return { access, category, title, slug, files: [], entryFile: null, externalUrl, tags: Array.isArray(body.tags) ? body.tags.map(tag => safeString(tag, 40)).filter(Boolean).slice(0, 20) : [], description: safeString(body.description, 1000), status: 'final', size: '—' };
+  }
+  if (!files.length || files.length > MAX_UPLOAD_FILES) return { error: `Choose 1–${MAX_UPLOAD_FILES} files` };
   const normalizedFiles = [];
   let totalBytes = 0;
   const names = new Set();
@@ -315,6 +322,12 @@ exports.handler = async (event) => {
       version: parent ? (Number(parent.version) || 1) + 1 : 1,
       createdAt, expiresAt: new Date(Date.now() + UPLOAD_URL_TTL * 1000).toISOString(),
     };
+    if (submission.externalUrl) {
+      const entry = reportEntry(pending);
+      if (parent) { parent.isLatest = false; parent.reportId = parent.reportId || parent.id; parent.version = parent.version || 1; parent.supersededBy = entry.id; await putJson(`report-meta/${submission.access}/${parentId}.json`, parent); }
+      await putJson(`report-meta/${submission.access}/${id}.json`, entry);
+      return response(201, { report: entry, external: true }, origin);
+    }
     await putJson(`report-submissions/${id}.json`, pending);
     const uploads = await Promise.all(pending.files.map(async file => ({
       name: file.name,
@@ -361,6 +374,7 @@ exports.handler = async (event) => {
     let entry;
     try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
     if (String(entry.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may delete only your own reports' }, origin);
+    if (entry.externalUrl) { await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-meta/${access}/${id}.json` })); return response(200, { deleted: id }, origin); }
     const prefix = new URL(entry.path).pathname.replace(/^\//, '').replace(/\/[^/]+$/, '/');
     if (!prefix.startsWith(access === 'public' ? 'public/' : 'private/')) return response(400, { error: 'Invalid report storage path' }, origin);
     await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-meta/${access}/${id}.json` }));
