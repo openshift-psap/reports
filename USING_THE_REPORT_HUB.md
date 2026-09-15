@@ -40,10 +40,10 @@ An expired or revoked token prevents future sign-ins with it. Browser sessions c
 
 1. Open <https://d3a5l0t7t5dflc.cloudfront.net/admin/index.html> and sign in.
 2. Under **Submit a report**, enter the title, category, optional tags/description, and visibility (**Red Hat Internal** or **Public**). The submitter is automatically recorded as your verified GitHub handle, and the service records the UTC submission time.
-3. Use the file picker to select the complete report folder. It must include `index.html` at its top level; relative assets and subfolders are supported.
+3. Use the file picker to select one self-contained HTML report. For a report with relative assets or multiple files, use the CLI uploader.
 4. Select **Upload report** and leave the page open until it says **Published**.
 
-The browser uploads directly to S3 using URLs that expire after 15 minutes. Report content and private report metadata are never committed to this public GitHub repository. A bundle is limited to 100 files and 100 MB.
+The browser uploads directly to S3 using URLs that expire after 15 minutes. Report content and private report metadata are never committed to this public GitHub repository.
 
 ## Delete a report
 
