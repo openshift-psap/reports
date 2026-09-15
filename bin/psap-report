@@ -46,7 +46,7 @@ def request(url, method="GET", data=None, token=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("directory", type=Path, nargs="?")
-    parser.add_argument("--entry-file", required=True, help="HTML entry path relative to directory")
+    parser.add_argument("--entry-file", help="HTML entry path relative to directory")
     parser.add_argument("--title"); parser.add_argument("--category", choices=["benchmarks", "ci", "investigations", "presentations"])
     parser.add_argument("--access", choices=["public", "internal"], default="internal")
     parser.add_argument("--tags", default=""); parser.add_argument("--description", default="")
@@ -54,7 +54,7 @@ def main():
     args = parser.parse_args()
     token = get_token(args.login)
     if args.login and not args.directory: return
-    if not args.directory or not args.title or not args.category: raise SystemExit("directory, --title, and --category are required for upload")
+    if not args.directory or not args.title or not args.category or not args.entry_file: raise SystemExit("directory, --entry-file, --title, and --category are required for upload")
     root = args.directory.resolve(); entry = args.entry_file.replace("\\", "/")
     files = [path for path in root.rglob("*") if path.is_file()]
     relative = {path.relative_to(root).as_posix(): path for path in files}
