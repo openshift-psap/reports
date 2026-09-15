@@ -11,6 +11,7 @@ from pathlib import Path
 
 OUTPUT_FILE = Path("index.html")
 S3_CONFIG_PATH = Path(__file__).parent / "s3_config.json"
+WORKSTREAMS_PATH = Path(__file__).parent / "workstreams.json"
 
 
 
@@ -19,6 +20,13 @@ def load_s3_config():
         with open(S3_CONFIG_PATH) as f:
             return json.load(f)
     return None
+
+
+def load_workstreams():
+    if WORKSTREAMS_PATH.exists():
+        with open(WORKSTREAMS_PATH) as f:
+            return json.load(f).get("workstreams", [])
+    return []
 
 
 def render_index():
@@ -34,6 +42,7 @@ def render_index():
     html = html.replace("__REPORT_COUNT__", "0")
     html = html.replace("__CLOUDFRONT_DOMAIN__", cf_domain)
     html = html.replace("__TOKEN_API_URL__", token_api)
+    html = html.replace("__WORKSTREAMS_JSON__", json.dumps(load_workstreams()))
 
     OUTPUT_FILE.write_text(html)
     print(f"Generated {OUTPUT_FILE} as an S3-backed report hub shell")
@@ -76,6 +85,7 @@ header h1{font-size:1.5rem;font-weight:600;display:none}
 .counter{font-size:0.875rem;color:var(--text-secondary)}
 .sort-select{padding:0.35rem 0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text);font-size:0.8rem}
 .cards{display:flex;flex-direction:column;gap:0.75rem;padding-bottom:2rem}
+.workstream-section{padding-bottom:1.5rem}.workstream-heading{display:flex;align-items:baseline;gap:.6rem;margin:1.25rem 0 .6rem;font-size:1.1rem}.workstream-heading small{font-size:.75rem;color:var(--text-secondary);font-weight:400}.workstream-tags{display:flex;gap:.4rem;flex-wrap:wrap;margin:.4rem 0 .75rem}
 .card{display:block;padding:1rem 1.25rem;border:1px solid var(--border);border-radius:8px;background:var(--bg-card);text-decoration:none;color:inherit;box-shadow:var(--shadow);transition:border-color 0.15s ease,background 0.15s ease}
 .card:hover{border-color:var(--accent);background:var(--bg-hover)}
 .card-top{display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-bottom:0.35rem}
@@ -108,7 +118,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
 </style>
 </head>
 <body>
-<div class="site-header"><div class="container"><a class="brand" href="#">PSAP<span>Report Hub</span></a><a class="manage-link" href="https://__CLOUDFRONT_DOMAIN__/admin/index.html">Sign in / Manage reports</a></div></div>
+<div class="site-header"><div class="container"><a class="brand" href="#">PSAP<span>Report Hub</span></a><div style="display:flex;align-items:center;gap:.6rem"><span id="auth-status" style="color:#c7c7c7;font-size:.78rem">Not signed in</span><a id="submit-link" class="manage-link" href="/_auth/github?state=/admin/index.html">Submit report</a></div></div></div>
 <div class="container">
   <header>
     <h1>PSAP Report Hub</h1>
@@ -160,6 +170,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
     </select>
   </div>
 
+  <div id="workstream-tags"></div>
   <div class="cards" id="cards"></div>
   <dialog id="version-history" style="max-width:600px;width:calc(100% - 2rem);border:1px solid var(--border);border-radius:10px;padding:1.5rem"><button onclick="document.getElementById('version-history').close()" style="float:right;border:0;background:none;font-size:1.2rem;cursor:pointer">×</button><h2 id="version-history-title" style="margin-bottom:1rem;font-size:1.1rem">Version history</h2><div id="version-history-list"></div></dialog>
 
@@ -218,6 +229,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
 <script>
 const REPORTS = __ENTRIES_JSON__;
 const CF_DOMAIN = "__CLOUDFRONT_DOMAIN__";
+const WORKSTREAMS = __WORKSTREAMS_JSON__;
 
 let activeCategory = null;
 let activeTags = new Set();
@@ -240,6 +252,7 @@ function init() {
   document.getElementById("search").addEventListener("input", e => { searchQuery = e.target.value.trim(); render(); });
   document.getElementById("sort").addEventListener("change", e => { sortBy = e.target.value; render(); });
   rebuildFilters();
+  renderWorkstreamTags();
   render();
   loadPublicEntries();
 }
@@ -449,7 +462,18 @@ function render() {
     return;
   }
 
-  container.innerHTML = filtered.map(r => {
+  const assigned = new Set();
+  const sections = WORKSTREAMS.map(workstream => {
+    const reports = filtered.filter(report => !assigned.has(report) && (report.tags || []).some(tag => (workstream.match_tags || []).includes(tag.toLowerCase())));
+    reports.forEach(report => assigned.add(report));
+    return { ...workstream, reports };
+  });
+  const unassigned = filtered.filter(report => !assigned.has(report));
+  if (unassigned.length) sections.push({ id: "unassigned", name: "Unassigned", reports: unassigned, legacy: true });
+  container.innerHTML = sections.filter(section => section.reports.length).map(section => `<section class="workstream-section"><h2 class="workstream-heading">${escHtml(section.name)} <small>${section.legacy ? "Existing reports awaiting classification" : `${section.reports.length} report${section.reports.length === 1 ? "" : "s"}`}</small></h2>${section.reports.map(reportCard).join("")}</section>`).join("");
+}
+
+function reportCard(r) {
     return `
     <div class="card" onclick="window.open('${escHtml(r.path)}','_blank')" style="cursor:pointer">
       <div class="card-top">
@@ -471,7 +495,14 @@ function render() {
         ${currentGithubHandle && r.author && r.author.toLowerCase() === currentGithubHandle.toLowerCase() ? `<button onclick="event.stopPropagation();updateReport('${escHtml(r.id)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer">Update</button>${r.status !== 'archived' ? `<button onclick="event.stopPropagation();archiveReport('${escHtml(r.id)}','${r.authenticated ? 'authenticated' : 'public'}','${escHtml(r.title)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer">Archive</button>` : ''}<button onclick="event.stopPropagation();deleteReport('${escHtml(r.id)}','${r.authenticated ? 'authenticated' : 'public'}','${escHtml(r.title)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid #c00;border-radius:4px;font-size:0.7rem;cursor:pointer;color:#c00">Delete</button>` : ""}
       </div>
     </div>`;
-  }).join("");
+}
+
+function renderWorkstreamTags() {
+  const container = document.getElementById("workstream-tags");
+  const configured = WORKSTREAMS.filter(workstream => (workstream.top_tags || []).length);
+  if (!configured.length) { container.innerHTML = ""; return; }
+  container.innerHTML = configured.map(workstream => `<div class="workstream-tags"><strong style="font-size:.78rem;min-width:80px">${escHtml(workstream.name)}</strong>${workstream.top_tags.map(tag => `<button class="pill" data-tag="${escHtml(tag)}">${escHtml(tag)}</button>`).join("")}</div>`).join("");
+  container.querySelectorAll("button[data-tag]").forEach(button => button.addEventListener("click", () => { activeTags.clear(); activeTags.add(button.dataset.tag); if (window.renderActiveTags) window.renderActiveTags(); render(); }));
 }
 
 function escHtml(s) {
@@ -505,6 +536,10 @@ function updateReport(id) {
   document.getElementById("report-access").value = report.authenticated ? "authenticated" : "public";
   document.getElementById("report-tags").value = (report.tags || []).join(", ");
   document.getElementById("report-description").value = report.description || "";
+  document.getElementById("report-source").value = report.externalUrl ? "external" : "upload";
+  document.getElementById("report-external-url").value = report.externalUrl || "";
+  document.getElementById("report-file-label").hidden = !!report.externalUrl;
+  document.getElementById("report-external-url").hidden = !report.externalUrl;
   document.getElementById("report-upload-btn").textContent = `Upload revision ${Number(report.version || 1) + 1}`;
   document.getElementById("report-upload-form").scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -549,6 +584,8 @@ async function initAdmin() {
     document.getElementById("submit-signin").hidden = true;
     const submitter = document.getElementById("report-author");
     currentGithubHandle = data.githubHandle || "";
+    document.getElementById("auth-status").textContent = data.githubHandle ? `Signed in as ${data.githubHandle}` : "Signed in with access token";
+    document.getElementById("submit-link").href = "/admin/index.html";
     submitter.value = data.githubHandle || "";
     submitter.placeholder = data.githubHandle ? "" : "GitHub sign-in required to submit";
     document.getElementById("report-upload-form").hidden = !data.githubHandle;

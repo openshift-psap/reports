@@ -1,0 +1,22 @@
+{
+  "workstreams": [
+    {
+      "id": "rhoai",
+      "name": "RHOAI",
+      "match_tags": ["rhoai"],
+      "top_tags": []
+    },
+    {
+      "id": "llm-d-rhaii",
+      "name": "llm-d / RHAII",
+      "match_tags": ["llm-d", "rhaii"],
+      "top_tags": []
+    },
+    {
+      "id": "rhaiis",
+      "name": "RHAIIS",
+      "match_tags": ["rhaiis"],
+      "top_tags": []
+    }
+  ]
+}

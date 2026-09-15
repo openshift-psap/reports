@@ -39,7 +39,7 @@ An expired or revoked token prevents future sign-ins with it. Browser sessions c
 ## Submit a report
 
 1. Open <https://d3a5l0t7t5dflc.cloudfront.net/admin/index.html> and sign in.
-2. Under **Submit a report**, enter the title, category, optional tags/description, and visibility (**Red Hat Internal** or **Public**). The submitter is automatically recorded as your verified GitHub handle, and the service records the UTC submission time.
+2. Under **Submit a report**, enter the title, category, optional tags/description, and visibility (**Red Hat Internal** or **Public**). Add `rhoai`, `llm-d`, `rhaii`, or `rhaiis` as tags when they apply. The submitter is automatically recorded as your verified GitHub handle, and the service records the UTC submission time.
 3. Use the file picker to select one self-contained HTML report; its filename does not matter. For a report with relative assets or multiple files, use the CLI uploader and designate its HTML entry file.
 4. Select **Upload report** and leave the page open until it says **Published**.
 
@@ -54,7 +54,7 @@ The CLI is the preferred uploader for report directories with assets, agent work
 ```bash
 ./bin/psap-report --login
 ./bin/psap-report ./standalone-report.html \
-  --title "Standalone report" --category investigations
+  --title "Standalone report" --category investigations --tags "rhoai"
 ./bin/psap-report ./rendered-report \
   --entry-file report.html \
   --title "Inference benchmark" \
@@ -65,6 +65,12 @@ The CLI is the preferred uploader for report directories with assets, agent work
 ```
 
 Authentication is stored locally at `~/.config/psap-report/github-oauth.json` with owner-only permissions. Re-run `--login` to authenticate a different GitHub account.
+
+## Workstreams and curated tags
+
+The hub groups reports into **RHOAI**, **llm-d / RHAII**, and **RHAIIS** when they carry the matching tags. These are ordinary optional tags, not a separate required field. Reports without one of those tags stay in an **Unassigned** section.
+
+Workstream owners curate the optional prominent tag shortcuts in [`_generator/workstreams.json`](./_generator/workstreams.json). Add approved tags to a workstream's `top_tags` list and merge the change; the next site deployment publishes them.
 
 ## Delete a report
 
@@ -80,7 +86,7 @@ When a report has more than one revision, its card shows **Versions**. The dialo
 
 ### Non-HTML reports
 
-Every submission must include a top-level `index.html`. This is the report landing page and keeps navigation, authorization, and relative assets consistent.
+Every submission needs an HTML entry page. Its name does not need to be `index.html`—select the file in the browser, or pass its relative name with `--entry-file` to the CLI.
 
 - **Quarto, Jupyter, Allure, and slide decks:** render or export them to static HTML and upload the resulting folder.
 - **PDFs:** include a small `index.html` landing page that describes the report and embeds or links to `report.pdf`.
@@ -93,7 +99,7 @@ Do not add server-side document converters or executable report generators to th
 
 | Problem | What to do |
 | --- | --- |
-| A public report shows the sign-in page | Wait a minute for the deployment/invalidation, then confirm its `meta.json` has `"access": "public"`. |
+| A public report shows the sign-in page | Wait a minute for the deployment/invalidation, then confirm it was submitted with **Public** visibility. |
 | A private report denies GitHub sign-in | Confirm you are in `openshift-psap` or request allowlist access through **#forum-psap**. |
 | A token is rejected | Check that it was copied in full and has not been revoked. Request a new token through **#forum-psap**. |
-| Upload fails before completion | Check the bundle contains a top-level `index.html`, is under 100 MB / 100 files, and retry to obtain fresh upload URLs. |
+| Upload fails before completion | Check the selected entry HTML file is included in the bundle, keep it under 100 MB / 100 files, and retry to obtain fresh upload URLs. |
