@@ -118,7 +118,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
 </style>
 </head>
 <body>
-<div class="site-header"><div class="container"><a class="brand" href="#">PSAP<span>Report Hub</span></a><div style="display:flex;align-items:center;gap:.6rem"><span id="auth-status" style="color:#c7c7c7;font-size:.78rem">Not signed in</span><a id="submit-link" class="manage-link" href="/admin/index.html">Submit report</a><a id="signin-link" class="manage-link" href="/admin/index.html">Sign in</a><a id="signout-link" class="manage-link" href="/_auth/logout" hidden>Sign out</a></div></div></div>
+<div class="site-header"><div class="container"><a class="brand" href="#">PSAP<span>Report Hub</span></a><div style="display:flex;align-items:center;gap:.6rem"><span id="auth-status" style="color:#c7c7c7;font-size:.78rem">Not signed in</span><a id="submit-link" class="manage-link" href="/admin/index.html?submit=1">Submit report</a><a id="signin-link" class="manage-link" href="/admin/index.html">Sign in</a><a id="signout-link" class="manage-link" href="/_auth/logout" hidden>Sign out</a></div></div></div>
 <div class="container">
   <header>
     <h1>PSAP Report Hub</h1>
@@ -586,6 +586,7 @@ async function initAdmin() {
     const submitter = document.getElementById("report-author");
     currentGithubHandle = data.githubHandle || "";
     document.getElementById("auth-status").textContent = data.githubHandle ? `Signed in as ${data.githubHandle}` : "Signed in with access token";
+    document.getElementById("submit-link").href = "#admin-panel";
     document.getElementById("signin-link").hidden = true;
     document.getElementById("signout-link").hidden = false;
     submitter.value = data.githubHandle || "";
@@ -597,6 +598,9 @@ async function initAdmin() {
     loadPrivateEntries();
     initReportTagPicker();
     initReportUpload();
+    if (new URLSearchParams(window.location.search).has("submit")) {
+      requestAnimationFrame(() => panel.scrollIntoView({ behavior: "smooth", block: "start" }));
+    }
   } catch (e) { return; }
 
   document.getElementById("token-generate-btn").addEventListener("click", async () => {
