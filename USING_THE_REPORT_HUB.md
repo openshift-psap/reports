@@ -74,7 +74,7 @@ Select **Sign out** in the hub header to end the browser session immediately. Th
 
 The hub groups reports into **RHOAI**, **llm-d / RHAII**, and **RHAIIS** when they carry the matching tags. These are ordinary optional tags, not a separate required field. Reports without one of those tags stay in an **Unassigned** section.
 
-Workstream owners curate the optional prominent tag shortcuts in [`_generator/workstreams.json`](./_generator/workstreams.json). Add approved tags to a workstream's `top_tags` list and merge the change; the next site deployment publishes them.
+Workstream owners curate the optional prominent tag shortcuts in [`_generator/workstreams.json`](./_generator/workstreams.json). The initial `top_tags` lists are intentionally empty. Use the top-tag proposal pull request to suggest a small, stable vocabulary for each workstream; once agreed, add the approved tags to that workstream's list and merge the change. The next site deployment publishes them.
 
 ## Delete a report
 
