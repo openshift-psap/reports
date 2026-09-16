@@ -18,6 +18,7 @@ const CONFIG = {
   callbackPath: '/_auth/callback',
   githubPath: '/_auth/github',
   tokenPath: '/_auth/token',
+  logoutPath: '/_auth/logout',
   publicManifestPath: '/public-reports.json',
 };
 
@@ -137,6 +138,20 @@ function setAuthCookie(redirectTo, method, githubHandle) {
   };
 }
 
+function clearAuthCookie(redirectTo) {
+  return {
+    status: '302',
+    statusDescription: 'Found',
+    headers: {
+      location: [{ key: 'Location', value: redirectTo || '/' }],
+      'set-cookie': [{
+        key: 'Set-Cookie',
+        value: `${CONFIG.cookieName}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Lax`,
+      }],
+    },
+  };
+}
+
 function loginPage(returnPath, error) {
   const errorHtml = error ? `<div style="color:#c00;background:#fde8e8;padding:0.5rem 1rem;border-radius:6px;margin-bottom:1rem;font-size:0.85rem">${error}</div>` : '';
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -213,6 +228,9 @@ exports.handler = async (event) => {
       /(^|&)access=public(&|$)/.test(request.querystring || '')) return request;
   if (uri === CONFIG.publicManifestPath) return request;
   if ((await getPublicPaths()).has(uri)) return request;
+
+  // End the browser session without affecting the underlying GitHub OAuth grant.
+  if (uri === CONFIG.logoutPath) return clearAuthCookie('/');
 
   // GitHub OAuth redirect
   if (uri === CONFIG.githubPath) {

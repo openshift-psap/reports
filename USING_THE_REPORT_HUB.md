@@ -39,7 +39,7 @@ An expired or revoked token prevents future sign-ins with it. Browser sessions c
 ## Submit a report
 
 1. Open <https://d3a5l0t7t5dflc.cloudfront.net/admin/index.html> and sign in.
-2. Under **Submit a report**, enter the title, category, optional tags/description, and visibility (**Red Hat Internal** or **Public**). Add `rhoai`, `llm-d`, `rhaii`, or `rhaiis` as tags when they apply. The submitter is automatically recorded as your verified GitHub handle, and the service records the UTC submission time.
+2. Under **Submit a report**, enter the title, category, optional tags/description, and visibility (**Red Hat Internal** or **Public**). The tag picker suggests tags already used in the hub; choose several, or type a new tag and press Enter. Add `rhoai`, `llm-d`, `rhaii`, or `rhaiis` as tags when they apply. The submitter is automatically recorded as your verified GitHub handle, and the service records the UTC submission time.
 3. Use the file picker to select one self-contained HTML report; its filename does not matter. For a report with relative assets or multiple files, use the CLI uploader and designate its HTML entry file.
 4. Select **Upload report** and leave the page open until it says **Published**.
 
@@ -65,6 +65,10 @@ The CLI is the preferred uploader for report directories with assets, agent work
 ```
 
 Authentication is stored locally at `~/.config/psap-report/github-oauth.json` with owner-only permissions. Re-run `--login` to authenticate a different GitHub account.
+
+## Sign out
+
+Select **Sign out** in the hub header to end the browser session immediately. This clears the Report Hub session only; it does not sign you out of GitHub itself.
 
 ## Workstreams and curated tags
 

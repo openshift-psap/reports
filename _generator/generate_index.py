@@ -118,7 +118,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
 </style>
 </head>
 <body>
-<div class="site-header"><div class="container"><a class="brand" href="#">PSAP<span>Report Hub</span></a><div style="display:flex;align-items:center;gap:.6rem"><span id="auth-status" style="color:#c7c7c7;font-size:.78rem">Not signed in</span><a id="submit-link" class="manage-link" href="/_auth/github?state=/admin/index.html">Submit report</a></div></div></div>
+<div class="site-header"><div class="container"><a class="brand" href="#">PSAP<span>Report Hub</span></a><div style="display:flex;align-items:center;gap:.6rem"><span id="auth-status" style="color:#c7c7c7;font-size:.78rem">Not signed in</span><a id="submit-link" class="manage-link" href="/_auth/github?state=/admin/index.html">Submit report</a><a id="signout-link" class="manage-link" href="/_auth/logout" hidden>Sign out</a></div></div></div>
 <div class="container">
   <header>
     <h1>PSAP Report Hub</h1>
@@ -188,7 +188,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
       <select id="report-category" class="sort-select"><option value="benchmarks">Benchmarks</option><option value="ci">CI</option><option value="investigations">Investigations</option><option value="presentations">Presentations</option></select>
       <select id="report-access" class="sort-select"><option value="authenticated">Red Hat Internal</option><option value="public">Public</option></select>
       <select id="report-source" class="sort-select"><option value="upload">Upload HTML</option><option value="external">External HTTPS link</option></select>
-      <input id="report-tags" class="search-box" placeholder="Tags, comma-separated" style="width:100%">
+      <div id="report-tag-picker" style="position:relative;width:100%"><div id="report-selected-tags" style="display:flex;gap:.35rem;flex-wrap:wrap;margin-bottom:.35rem"></div><input id="report-tags" class="search-box" placeholder="Add tags…" autocomplete="off" style="width:100%"><div id="report-tag-suggestions" style="display:none;position:absolute;top:100%;left:0;z-index:50;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;margin-top:2px;max-height:180px;overflow-y:auto;width:100%;box-shadow:var(--shadow)"></div></div>
       <input id="report-description" class="search-box" placeholder="Short description (optional)" style="grid-column:1 / -1;width:100%">
       <label id="report-file-label" style="grid-column:1 / -1;font-size:0.85rem;color:var(--text-secondary)">Report HTML file<br><input id="report-files" type="file" accept="text/html,.html,.htm" style="margin-top:0.35rem"><br><span style="font-size:0.8rem">Any HTML filename is accepted. For assets or multiple files, use the CLI uploader.</span></label>
       <input id="report-external-url" class="search-box" type="url" placeholder="https://external-report.example/" hidden style="grid-column:1 / -1;width:100%">
@@ -243,9 +243,10 @@ let authorSearchBound = false;
 let currentGithubHandle = "";
 let isAuthenticated = false;
 let updatingReport = null;
+const selectedReportTags = new Set();
 
 function getCategories() { return [...new Set(REPORTS.map(r => r.category))].sort(); }
-function getAllTags() { return [...new Set(REPORTS.flatMap(r => r.tags))].sort(); }
+function getAllTags() { return [...new Set(REPORTS.flatMap(r => r.tags || []))].sort(); }
 function getAllAuthors() { return [...new Set(REPORTS.map(r => r.author).filter(Boolean))].sort(); }
 
 function init() {
@@ -534,7 +535,7 @@ function updateReport(id) {
   document.getElementById("report-title").value = report.title;
   document.getElementById("report-category").value = report.category;
   document.getElementById("report-access").value = report.authenticated ? "authenticated" : "public";
-  document.getElementById("report-tags").value = (report.tags || []).join(", ");
+  window.setReportTags(report.tags || []);
   document.getElementById("report-description").value = report.description || "";
   document.getElementById("report-source").value = report.externalUrl ? "external" : "upload";
   document.getElementById("report-external-url").value = report.externalUrl || "";
@@ -586,6 +587,7 @@ async function initAdmin() {
     currentGithubHandle = data.githubHandle || "";
     document.getElementById("auth-status").textContent = data.githubHandle ? `Signed in as ${data.githubHandle}` : "Signed in with access token";
     document.getElementById("submit-link").href = "/admin/index.html";
+    document.getElementById("signout-link").hidden = false;
     submitter.value = data.githubHandle || "";
     submitter.placeholder = data.githubHandle ? "" : "GitHub sign-in required to submit";
     document.getElementById("report-upload-form").hidden = !data.githubHandle;
@@ -593,6 +595,7 @@ async function initAdmin() {
     renderTokenTable(data.tokens);
     render();
     loadPrivateEntries();
+    initReportTagPicker();
     initReportUpload();
   } catch (e) { return; }
 
@@ -625,6 +628,57 @@ async function initAdmin() {
   });
 }
 
+function initReportTagPicker() {
+  const input = document.getElementById("report-tags");
+  const suggestions = document.getElementById("report-tag-suggestions");
+  if (!input || input.dataset.bound) return;
+  input.dataset.bound = "true";
+
+  function normalise(tag) { return tag.trim().replace(/\s+/g, " ").slice(0, 40); }
+  function renderSelected() {
+    const container = document.getElementById("report-selected-tags");
+    container.innerHTML = "";
+    selectedReportTags.forEach(tag => {
+      const chip = document.createElement("button");
+      chip.type = "button"; chip.className = "active-tag"; chip.title = `Remove ${tag}`;
+      chip.textContent = `${tag} ×`;
+      chip.addEventListener("click", () => { selectedReportTags.delete(tag); renderSelected(); showSuggestions(input.value); });
+      container.appendChild(chip);
+    });
+  }
+  function addTag(tag) {
+    const clean = normalise(tag);
+    if (!clean) return;
+    const existing = [...selectedReportTags].find(item => item.toLowerCase() === clean.toLowerCase());
+    if (!existing) selectedReportTags.add(clean);
+    input.value = ""; suggestions.style.display = "none"; renderSelected();
+  }
+  function showSuggestions(query) {
+    const q = query.trim().toLowerCase();
+    const tags = getAllTags().filter(tag => ![...selectedReportTags].some(item => item.toLowerCase() === tag.toLowerCase()) && (!q || tag.toLowerCase().includes(q))).slice(0, 12);
+    if (!tags.length) { suggestions.style.display = "none"; return; }
+    suggestions.innerHTML = "";
+    tags.forEach(tag => {
+      const option = document.createElement("button");
+      option.type = "button"; option.className = "tag-suggestion"; option.style.cssText = "display:block;width:100%;border:0;text-align:left;background:none";
+      option.textContent = tag;
+      option.addEventListener("click", () => addTag(tag));
+      suggestions.appendChild(option);
+    });
+    suggestions.style.display = "block";
+  }
+  input.addEventListener("input", () => showSuggestions(input.value));
+  input.addEventListener("focus", () => showSuggestions(input.value));
+  input.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === ",") { event.preventDefault(); addTag(input.value); }
+    else if (event.key === "Backspace" && !input.value && selectedReportTags.size) { selectedReportTags.delete([...selectedReportTags].pop()); renderSelected(); }
+    else if (event.key === "Escape") suggestions.style.display = "none";
+  });
+  document.addEventListener("click", event => { if (!event.target.closest("#report-tag-picker")) suggestions.style.display = "none"; });
+  window.setReportTags = tags => { selectedReportTags.clear(); (tags || []).forEach(addTag); renderSelected(); };
+  renderSelected();
+}
+
 function initReportUpload() {
   const form = document.getElementById("report-upload-form");
   if (!form || form.dataset.bound) return;
@@ -642,7 +696,7 @@ function initReportUpload() {
       title: document.getElementById("report-title").value,
       category: document.getElementById("report-category").value,
       access: document.getElementById("report-access").value,
-      tags: document.getElementById("report-tags").value.split(",").map(tag => tag.trim()).filter(Boolean),
+      tags: [...selectedReportTags],
       description: document.getElementById("report-description").value,
       entryFile: files[0] && files[0].name,
       externalUrl,
@@ -655,7 +709,7 @@ function initReportUpload() {
       const planResponse = await fetch(`${TOKEN_API}/reports`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const plan = await planResponse.json();
       if (!planResponse.ok) throw new Error(plan.error || "Could not prepare upload");
-      if (plan.external) { status.textContent = "Published."; form.reset(); await loadPublicEntries(); await loadPrivateEntries(); return; }
+      if (plan.external) { status.textContent = "Published."; form.reset(); window.setReportTags([]); updatingReport = null; await loadPublicEntries(); await loadPrivateEntries(); return; }
       const byName = new Map(files.map(item => [item.name, item.file]));
       let uploaded = 0;
       for (const target of plan.uploads) {
@@ -670,6 +724,7 @@ function initReportUpload() {
       if (!completeResponse.ok) throw new Error(complete.error || "Could not publish report");
       status.textContent = "Published.";
       form.reset();
+      window.setReportTags([]);
       updatingReport = null;
       document.getElementById("report-upload-btn").textContent = "Upload report";
       document.getElementById("report-author").value = githubHandle;
