@@ -129,8 +129,8 @@ if token_behavior is None:
     token_behavior = copy.deepcopy(config['DefaultCacheBehavior'])
     token_behavior['PathPattern'] = '/_auth/token'
     token_behavior['AllowedMethods'] = {
-        'Quantity': 4,
-        'Items': ['GET', 'HEAD', 'OPTIONS', 'POST'],
+        'Quantity': 7,
+        'Items': ['GET', 'HEAD', 'OPTIONS', 'PUT', 'POST', 'PATCH', 'DELETE'],
         'CachedMethods': {'Quantity': 2, 'Items': ['GET', 'HEAD']}
     }
     behaviors.append(token_behavior)
