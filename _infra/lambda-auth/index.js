@@ -215,6 +215,11 @@ function requestBody(request) {
   return body.encoding === 'base64' ? Buffer.from(body.data, 'base64').toString('utf8') : body.data;
 }
 
+function safeReturnPath(value) {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.startsWith('/_auth/')) return '/';
+  return value;
+}
+
 exports.handler = async (event) => {
   const request = event.Records[0].cf.request;
   const headers = request.headers;
@@ -231,6 +236,11 @@ exports.handler = async (event) => {
 
   // End the browser session without affecting the underlying GitHub OAuth grant.
   if (uri === CONFIG.logoutPath) return clearAuthCookie('/');
+
+  // This endpoint exists only as the target of the token form POST. Serving a
+  // login page for a direct GET prevents an authenticated browser from being
+  // forwarded to the S3 origin, where no such object exists.
+  if (uri === CONFIG.tokenPath && request.method === 'GET') return loginPage('/');
 
   // GitHub OAuth redirect
   if (uri === CONFIG.githubPath) {
@@ -293,7 +303,7 @@ exports.handler = async (event) => {
   if (uri === CONFIG.tokenPath && request.method === 'POST') {
     const form = parseFormBody(requestBody(request));
     const submittedToken = form.token || '';
-    const returnPath = form.state || '/';
+    const returnPath = safeReturnPath(form.state);
 
     const tokensData = await getTokens();
     const entry = tokensData.tokens && tokensData.tokens[tokenDigest(submittedToken)];
