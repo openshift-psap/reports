@@ -53,6 +53,7 @@ INDEX_TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
 <title>PSAP Report Hub</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -386,8 +387,7 @@ function rebuildAuthorSearch() {
 }
 
 function reportsApiUrl(access) {
-  const root = CF_DOMAIN ? `https://${CF_DOMAIN}` : window.location.origin;
-  return `${root}/_admin-api/reports?access=${encodeURIComponent(access)}`;
+  return `${window.location.origin}/_admin-api/reports?access=${encodeURIComponent(access)}`;
 }
 
 async function loadPublicEntries() {
@@ -401,7 +401,6 @@ async function loadPublicEntries() {
 }
 
 async function loadPrivateEntries() {
-  if (!CF_DOMAIN) return;
   try {
     const resp = await fetch(reportsApiUrl("authenticated"), { credentials: "include" });
     if (!resp.ok) return;
@@ -475,8 +474,9 @@ function render() {
 }
 
 function reportCard(r) {
+    const path = escHtml(reportUrl(r));
     return `
-    <div class="card" onclick="window.open('${escHtml(r.path)}','_blank')" style="cursor:pointer">
+    <div class="card" onclick="window.open('${path}','_blank')" style="cursor:pointer">
       <div class="card-top">
         <div class="card-meta">
           <span class="category-badge">${escHtml(r.category)}</span>
@@ -496,6 +496,12 @@ function reportCard(r) {
         ${currentGithubHandle && r.author && r.author.toLowerCase() === currentGithubHandle.toLowerCase() ? `<button onclick="event.stopPropagation();updateReport('${escHtml(r.id)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer">Update</button>${r.status !== 'archived' ? `<button onclick="event.stopPropagation();archiveReport('${escHtml(r.id)}','${r.authenticated ? 'authenticated' : 'public'}','${escHtml(r.title)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer">Archive</button>` : ''}<button onclick="event.stopPropagation();deleteReport('${escHtml(r.id)}','${r.authenticated ? 'authenticated' : 'public'}','${escHtml(r.title)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid #c00;border-radius:4px;font-size:0.7rem;cursor:pointer;color:#c00">Delete</button>` : ""}
       </div>
     </div>`;
+}
+
+function reportUrl(report) {
+  if (report.externalUrl) return report.externalUrl;
+  try { return `${window.location.origin}${new URL(report.path).pathname}`; }
+  catch (e) { return report.path; }
 }
 
 function renderWorkstreamTags() {
@@ -525,7 +531,7 @@ async function showVersionHistory(reportId, access, title) {
   const data = await response.json();
   if (!response.ok) return alert(data.error || "Could not load version history");
   document.getElementById("version-history-title").textContent = `Version history — ${title}`;
-  document.getElementById("version-history-list").innerHTML = data.reports.sort((a,b) => Number(b.version) - Number(a.version)).map(report => `<div style="padding:.7rem 0;border-top:1px solid #d2d2d2"><strong>Version ${escHtml(report.version)}</strong>${report.isLatest !== false ? " · Current" : ""}<br><span style="font-size:.85rem;color:#6a6e73">${escHtml(formatSubmittedTime(report))} · ${escHtml(report.author || "")}</span><br><a href="${escHtml(report.path)}" target="_blank" rel="noopener" style="color:#c00">Open this version</a></div>`).join("");
+  document.getElementById("version-history-list").innerHTML = data.reports.sort((a,b) => Number(b.version) - Number(a.version)).map(report => `<div style="padding:.7rem 0;border-top:1px solid #d2d2d2"><strong>Version ${escHtml(report.version)}</strong>${report.isLatest !== false ? " · Current" : ""}<br><span style="font-size:.85rem;color:#6a6e73">${escHtml(formatSubmittedTime(report))} · ${escHtml(report.author || "")}</span><br><a href="${escHtml(reportUrl(report))}" target="_blank" rel="noopener" style="color:#c00">Open this version</a></div>`).join("");
   document.getElementById("version-history").showModal();
 }
 

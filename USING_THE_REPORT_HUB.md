@@ -2,8 +2,8 @@
 
 The PSAP Report Hub has a public index and a secure report delivery site:
 
-- **Browse reports:** <https://d3a5l0t7t5dflc.cloudfront.net/>
-- **Sign in, submit reports, and manage access tokens:** <https://d3a5l0t7t5dflc.cloudfront.net/admin/index.html>
+- **Browse reports:** <https://reports.psap.aws.rhperfscale.org/>
+- **Sign in, submit reports, and manage access tokens:** <https://reports.psap.aws.rhperfscale.org/admin/index.html>
 
 ## Browse reports
 
@@ -27,7 +27,7 @@ If you need access, contact **#forum-psap** on Slack.
 
 All authenticated PSAP members can use the protected admin page to manage tokens.
 
-1. Open <https://d3a5l0t7t5dflc.cloudfront.net/admin/index.html> and sign in.
+1. Open <https://reports.psap.aws.rhperfscale.org/admin/index.html> and sign in.
 2. Enter a **Group** (for example, `engineering`) and a descriptive **Note**.
 3. Choose a token lifetime: **7 days** (default), 30 days, 90 days, one year, or **Long-lived**.
 4. Select **Generate Token**.
@@ -38,7 +38,7 @@ An expired or revoked token prevents future sign-ins with it. Browser sessions c
 
 ## Submit a report
 
-1. Open <https://d3a5l0t7t5dflc.cloudfront.net/admin/index.html> and sign in.
+1. Open <https://reports.psap.aws.rhperfscale.org/admin/index.html> and sign in.
 2. Under **Submit a report**, enter the title, category, optional tags/description, and visibility (**Red Hat Internal** or **Public**). The tag picker suggests tags already used in the hub; choose several, or type a new tag and press Enter. Add `rhoai`, `llm-d`, `rhaii`, or `rhaiis` as tags when they apply. The submitter is automatically recorded as your verified GitHub handle, and the service records the UTC submission time.
 3. Use the file picker to select one self-contained HTML report; its filename does not matter. For a report with relative assets or multiple files, use the CLI uploader and designate its HTML entry file.
 4. Select **Upload report** and leave the page open until it says **Published**.
