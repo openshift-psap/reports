@@ -206,13 +206,13 @@ Sign in with GitHub</a>
 }
 
 function parseFormBody(body) {
-  const params = {};
-  if (!body) return params;
-  body.split('&').forEach(pair => {
-    const [k, ...v] = pair.split('=');
-    params[decodeURIComponent(k)] = decodeURIComponent(v.join('='));
-  });
-  return params;
+  return body ? querystring.parse(body) : {};
+}
+
+function requestBody(request) {
+  const body = request.body;
+  if (!body || !body.data) return '';
+  return body.encoding === 'base64' ? Buffer.from(body.data, 'base64').toString('utf8') : body.data;
 }
 
 exports.handler = async (event) => {
@@ -291,7 +291,7 @@ exports.handler = async (event) => {
 
   // Token validation (POST)
   if (uri === CONFIG.tokenPath && request.method === 'POST') {
-    const form = parseFormBody(request.body && request.body.data);
+    const form = parseFormBody(requestBody(request));
     const submittedToken = form.token || '';
     const returnPath = form.state || '/';
 

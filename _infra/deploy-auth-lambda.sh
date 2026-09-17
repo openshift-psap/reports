@@ -104,11 +104,11 @@ echo "=== Step 5: Associate with CloudFront ==="
 ETAG=$(aws cloudfront get-distribution-config --id "$DIST_ID" --query 'ETag' --output text)
 aws cloudfront get-distribution-config --id "$DIST_ID" --query 'DistributionConfig' > /tmp/cf-dist-config.json
 
-# Associate the viewer-request authorizer with every behavior.  The API route
-# is a separate cache behavior and must receive the same version; otherwise it
-# can keep an older auth policy after an edge deployment.
+# Associate the viewer-request authorizer with every behavior. The token-login
+# endpoint is the only POST form handled at the edge, so it gets a dedicated
+# behavior that permits POST and includes its small request body.
 python3 -c "
-import json
+import copy, json
 with open('/tmp/cf-dist-config.json') as f:
     config = json.load(f)
 association = {
@@ -119,9 +119,24 @@ association = {
         'IncludeBody': False
     }]
 }
+token_association = copy.deepcopy(association)
+token_association['Items'][0]['IncludeBody'] = True
 config['DefaultCacheBehavior']['LambdaFunctionAssociations'] = association
-for behavior in config.get('CacheBehaviors', {}).get('Items', []):
-    behavior['LambdaFunctionAssociations'] = association
+cache_behaviors = config.setdefault('CacheBehaviors', {'Quantity': 0, 'Items': []})
+behaviors = cache_behaviors.setdefault('Items', [])
+token_behavior = next((item for item in behaviors if item.get('PathPattern') == '/_auth/token'), None)
+if token_behavior is None:
+    token_behavior = copy.deepcopy(config['DefaultCacheBehavior'])
+    token_behavior['PathPattern'] = '/_auth/token'
+    token_behavior['AllowedMethods'] = {
+        'Quantity': 4,
+        'Items': ['GET', 'HEAD', 'OPTIONS', 'POST'],
+        'CachedMethods': {'Quantity': 2, 'Items': ['GET', 'HEAD']}
+    }
+    behaviors.append(token_behavior)
+for behavior in behaviors:
+    behavior['LambdaFunctionAssociations'] = token_association if behavior.get('PathPattern') == '/_auth/token' else association
+cache_behaviors['Quantity'] = len(behaviors)
 with open('/tmp/cf-dist-config.json', 'w') as f:
     json.dump(config, f, indent=2)
 "
