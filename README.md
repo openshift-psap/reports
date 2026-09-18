@@ -8,7 +8,7 @@ See [Using the PSAP Report Hub](USING_THE_REPORT_HUB.md) for browsing, sign-in, 
 
 1. **Report bundles live only in S3** — submitters upload an `index.html` bundle through the protected hub.
 2. **The repository deploys the hub shell** — GitHub Actions uses OIDC to publish the application UI and infrastructure-controlled artifacts.
-3. **Metadata is per-report** — S3 objects under `report-meta/public/` and `report-meta/private/` power the dynamic index without a shared mutable manifest.
+3. **Metadata is per-report** — S3 objects under `report-meta/public/` and `report-meta/private/` remain the authoritative revision records. Derived S3 indexes provide fast current-report listings and targeted version-history retrievals.
 4. **Auth via CloudFront** — `private/` reports are gated by GitHub OAuth or an access token; `public/` reports are deliberately anonymous.
 
 ## Adding a report
