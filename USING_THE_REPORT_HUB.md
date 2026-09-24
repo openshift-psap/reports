@@ -88,6 +88,17 @@ Owners can select **Update** on a current report. The form is pre-filled, and up
 
 When a report has more than one revision, its card shows **Versions**. The dialog lists every retained revision and provides a direct link to each one. Authenticated users also see the stable report ID on cards; use it when referring to a report in automation or support requests.
 
+## Rebuild report indexes
+
+The Hub keeps derived S3 indexes for fast listings and Version History. Individual objects under `report-meta/` remain authoritative. An operator can preview or repair indexes with AWS credentials that can read and write the report bucket:
+
+```bash
+python3 _infra/rebuild-report-indexes.py --dry-run
+python3 _infra/rebuild-report-indexes.py
+```
+
+Use `--access public` or `--access authenticated` to rebuild one visibility scope.
+
 ### Non-HTML reports
 
 Every submission needs an HTML entry page. Its name does not need to be `index.html`—select the file in the browser, or pass its relative name with `--entry-file` to the CLI.

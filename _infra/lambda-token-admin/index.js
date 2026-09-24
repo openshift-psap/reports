@@ -21,6 +21,7 @@ const REPORT_ACCESS = new Set(['public', 'authenticated']);
 const MAX_UPLOAD_FILES = 100;
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const UPLOAD_URL_TTL = 15 * 60;
+const REPORT_INDEX_SCHEMA_VERSION = 1;
 
 const s3 = new S3Client({ region: REGION });
 
@@ -159,23 +160,85 @@ async function putJson(key, value) {
   }));
 }
 
-async function listReports(access, includeSuperseded = false) {
+function currentIndexKey(access) {
+  return `report-index/${access}-current.json`;
+}
+
+function historyIndexKey(access, reportId) {
+  return `report-index/history/${access}/${reportId}.json`;
+}
+
+function normalizedReports(entries) {
+  const counts = new Map();
+  entries.forEach(entry => { const id = entry.reportId || entry.id; counts.set(id, (counts.get(id) || 0) + 1); });
+  const reports = entries.map(entry => ({
+    ...entry,
+    reportId: entry.reportId || entry.id,
+    version: entry.version || 1,
+    versionCount: counts.get(entry.reportId || entry.id) || 1,
+  })).sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
+  return { reports, current: reports.filter(entry => entry.isLatest !== false) };
+}
+
+async function scanReportMetadata(access) {
   const prefix = `report-meta/${access}/`;
   let continuationToken;
   const entries = [];
   do {
     const page = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix, ContinuationToken: continuationToken }));
-    for (const item of page.Contents || []) {
-      if (!item.Key.endsWith('.json')) continue;
-      try { entries.push(await getJson(item.Key)); } catch (error) { console.log(JSON.stringify({ event: 'report_metadata_read_failed', key: item.Key, error: error.name })); }
-    }
+    const keys = (page.Contents || []).map(item => item.Key).filter(key => key.endsWith('.json'));
+    const values = await Promise.all(keys.map(async key => {
+      try { return await getJson(key); }
+      catch (error) { console.log(JSON.stringify({ event: 'report_metadata_read_failed', key, error: error.name })); return null; }
+    }));
+    entries.push(...values.filter(Boolean));
     continuationToken = page.NextContinuationToken;
   } while (continuationToken);
-  const counts = new Map();
-  entries.forEach(entry => { const id = entry.reportId || entry.id; counts.set(id, (counts.get(id) || 0) + 1); });
-  return entries.filter(entry => includeSuperseded || entry.isLatest !== false)
-    .map(entry => ({ ...entry, reportId: entry.reportId || entry.id, version: entry.version || 1, versionCount: counts.get(entry.reportId || entry.id) || 1 }))
-    .sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
+  return entries;
+}
+
+async function rebuildReportIndexes(access) {
+  const { reports, current } = normalizedReports(await scanReportMetadata(access));
+  const generatedAt = new Date().toISOString();
+  await putJson(currentIndexKey(access), { schemaVersion: REPORT_INDEX_SCHEMA_VERSION, generatedAt, reports: current });
+  const byReportId = new Map();
+  reports.forEach(report => {
+    const history = byReportId.get(report.reportId) || [];
+    history.push(report); byReportId.set(report.reportId, history);
+  });
+  await Promise.all([...byReportId.entries()].map(([reportId, history]) =>
+    putJson(historyIndexKey(access, reportId), { schemaVersion: REPORT_INDEX_SCHEMA_VERSION, generatedAt, reportId, reports: history })));
+
+  // Remove history indexes for reports whose authoritative metadata was deleted.
+  const prefix = `report-index/history/${access}/`;
+  let token;
+  do {
+    const page = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix, ContinuationToken: token }));
+    const stale = (page.Contents || []).filter(item => {
+      const reportId = item.Key.substring(prefix.length).replace(/\.json$/, '');
+      return !byReportId.has(reportId);
+    }).map(item => ({ Key: item.Key }));
+    if (stale.length) await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: stale, Quiet: true } }));
+    token = page.NextContinuationToken;
+  } while (token);
+  return { reports, current };
+}
+
+async function listReports(access, includeSuperseded = false, reportId = '') {
+  try {
+    if (includeSuperseded && reportId) {
+      const index = await getJson(historyIndexKey(access, reportId));
+      if (Array.isArray(index.reports)) return index.reports;
+    } else if (!includeSuperseded) {
+      const index = await getJson(currentIndexKey(access));
+      if (Array.isArray(index.reports)) return index.reports;
+    }
+  } catch (error) {
+    console.log(JSON.stringify({ event: 'report_index_rebuild_required', access, reportId: reportId || null, error: error.name }));
+  }
+  const rebuilt = await rebuildReportIndexes(access);
+  if (includeSuperseded) return reportId ? rebuilt.reports.filter(entry => entry.reportId === reportId) : rebuilt.reports;
+  return rebuilt.current;
 }
 
 async function deleteReportObjects(prefix) {
@@ -281,8 +344,7 @@ exports.handler = async (event) => {
   // Private metadata is never returned through this branch.
   if (method === 'GET' && isReportsPath && (event.queryStringParameters || {}).access === 'public') {
     const query = event.queryStringParameters || {};
-    let reports = await listReports('public', query.history === '1');
-    if (query.reportId) reports = reports.filter(entry => entry.reportId === query.reportId);
+    const reports = await listReports('public', query.history === '1', query.reportId || '');
     return response(200, { reports }, origin);
   }
 
@@ -298,8 +360,7 @@ exports.handler = async (event) => {
     const query = event.queryStringParameters || {};
     const access = query.access;
     if (access !== 'authenticated') return response(400, { error: 'access must be authenticated' }, origin);
-    let reports = await listReports(access, query.history === '1');
-    if (query.reportId) reports = reports.filter(entry => entry.reportId === query.reportId);
+    const reports = await listReports(access, query.history === '1', query.reportId || '');
     return response(200, { reports }, origin);
   }
 
@@ -335,6 +396,7 @@ exports.handler = async (event) => {
       const entry = reportEntry(pending);
       if (parent) { parent.isLatest = false; parent.reportId = parent.reportId || parent.id; parent.version = parent.version || 1; parent.supersededBy = entry.id; await putJson(`report-meta/${submission.access}/${parentId}.json`, parent); }
       await putJson(`report-meta/${submission.access}/${id}.json`, entry);
+      await rebuildReportIndexes(submission.access);
       return response(201, { report: entry, external: true }, origin);
     }
     await putJson(`report-submissions/${id}.json`, pending);
@@ -371,6 +433,7 @@ exports.handler = async (event) => {
     }
     await putJson(`report-meta/${pending.access}/${id}.json`, entry);
     await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-submissions/${id}.json` }));
+    await rebuildReportIndexes(pending.access);
     return response(201, { report: entry }, origin);
   }
 
@@ -383,11 +446,16 @@ exports.handler = async (event) => {
     let entry;
     try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
     if (String(entry.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may delete only your own reports' }, origin);
-    if (entry.externalUrl) { await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-meta/${access}/${id}.json` })); return response(200, { deleted: id }, origin); }
+    if (entry.externalUrl) {
+      await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-meta/${access}/${id}.json` }));
+      await rebuildReportIndexes(access);
+      return response(200, { deleted: id }, origin);
+    }
     const prefix = new URL(entry.path).pathname.replace(/^\//, '').replace(/\/[^/]+$/, '/');
     if (!prefix.startsWith(access === 'public' ? 'public/' : 'private/')) return response(400, { error: 'Invalid report storage path' }, origin);
     await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-meta/${access}/${id}.json` }));
     await deleteReportObjects(prefix);
+    await rebuildReportIndexes(access);
     return response(200, { deleted: id }, origin);
   }
 
@@ -404,6 +472,7 @@ exports.handler = async (event) => {
     entry.status = 'archived';
     entry.archivedAt = new Date().toISOString();
     await putJson(`report-meta/${access}/${id}.json`, entry);
+    await rebuildReportIndexes(access);
     return response(200, { report: entry }, origin);
   }
 
