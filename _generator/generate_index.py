@@ -700,6 +700,14 @@ function initReportUpload() {
     event.preventDefault();
     const button = document.getElementById("report-upload-btn");
     const status = document.getElementById("report-upload-status");
+    const uploadOrigin = `https://${CF_DOMAIN}`;
+    if (source.value !== "external" && CF_DOMAIN && window.location.origin !== uploadOrigin) {
+      const link = document.createElement("a");
+      link.href = `${uploadOrigin}/admin/index.html?submit=1`;
+      link.textContent = uploadOrigin;
+      status.replaceChildren("Uploads are available only from ", link, ". Open that site and sign in to submit your report.");
+      return;
+    }
     const externalUrl = document.getElementById("report-source").value === "external" ? document.getElementById("report-external-url").value.trim() : "";
     const files = externalUrl ? [] : [...document.getElementById("report-files").files].map(file => ({ file, name: file.name, size: file.size, contentType: file.type || "text/html" }));
     const payload = {
