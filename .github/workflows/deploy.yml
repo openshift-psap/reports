@@ -15,7 +15,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  tests:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/tests.yml
+
   build-and-deploy:
+    needs: tests
     runs-on: ubuntu-latest
     # Retained as the OIDC-protected deployment environment. This does not
     # publish GitHub Pages; the hub itself is deployed only to S3/CloudFront.
