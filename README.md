@@ -40,6 +40,8 @@ Do not commit report HTML, assets, or private report metadata to this repository
 
 Run `node --test tests/*.test.js` for API and form behavior tests (no AWS access or installed dependencies required), and `python3 _generator/generate_index.py` to generate the hub shell locally. The form tests use a lightweight DOM stub; they do not replace a live browser smoke test.
 
+The **Report Hub Tests** workflow runs the regression suite on pull requests to `main`. The deployment workflow reuses the same checks on pushes to `main` and manual deployments; deployment cannot start unless the tests pass. Test jobs have read-only repository access and need no AWS credentials or secrets.
+
 For the metadata-edit feature, deploy the updated token-admin Lambda **before** publishing the updated hub shell. The previous Lambda interprets all report PATCH requests as archive requests; the new Lambda distinguishes metadata edits from archiving. The site workflow deploys only the shell, not the Lambda.
 
 ## Architecture decisions
