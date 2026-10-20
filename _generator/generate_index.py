@@ -108,6 +108,16 @@ header h1{font-size:1.5rem;font-weight:600;display:none}
 .active-tag{display:inline-flex;align-items:center;gap:0.25rem;padding:0.2rem 0.5rem;border-radius:99px;font-size:0.72rem;font-weight:500;background:var(--pill-active-bg);color:var(--pill-active-text);cursor:pointer;user-select:none}
 .active-tag:hover{opacity:0.85}
 .active-tag .x{font-size:0.85rem;line-height:1;margin-left:0.15rem}
+.report-form-actions{grid-column:1 / -1;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.report-form-button{flex:0 0 auto;padding:.45rem 1rem;background:var(--accent);color:#fff;border:1px solid var(--accent);border-radius:6px;font-family:inherit;font-size:.8rem;font-weight:600;line-height:1.25;cursor:pointer}
+.report-form-button-secondary{background:transparent;color:var(--accent)}
+.report-form-button-secondary:hover{background:var(--pill-bg)}
+.report-form-button:disabled{opacity:.6;cursor:wait}
+.report-update-modes{grid-column:1 / -1;border:0;padding:0;font-size:.85rem}
+.report-update-modes legend{margin-bottom:.4rem;font-weight:600}
+.report-mode-options{display:flex;gap:.5rem 1.25rem;flex-wrap:wrap}
+.report-mode-options label{display:flex;align-items:center;gap:.4rem;cursor:pointer}
+.report-mode-options input{accent-color:var(--accent)}
 footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-top:1px solid var(--border)}
 .empty-state{text-align:center;padding:3rem 1rem;color:var(--text-secondary)}
 .empty-state p{font-size:1rem;margin-bottom:0.5rem}
@@ -189,12 +199,23 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
       <select id="report-category" class="sort-select"><option value="benchmarks">Benchmarks</option><option value="ci">CI</option><option value="investigations">Investigations</option><option value="presentations">Presentations</option></select>
       <select id="report-access" class="sort-select"><option value="authenticated">Red Hat Internal</option><option value="public">Public</option></select>
       <select id="report-source" class="sort-select"><option value="upload">Upload HTML</option><option value="external">External HTTPS link</option></select>
+      <fieldset id="report-update-mode-label" class="report-update-modes" hidden>
+        <legend>Update report</legend>
+        <div class="report-mode-options">
+          <label><input type="radio" name="report-update-mode" id="report-update-metadata" value="metadata" checked> Edit info only — keep existing report</label>
+          <label><input type="radio" name="report-update-mode" id="report-update-replacement" value="replacement"> Replace report / change link</label>
+        </div>
+      </fieldset>
+      <fieldset style="grid-column:1 / -1;border:1px solid var(--border);border-radius:6px;padding:.65rem"><legend>Workstream</legend><div id="report-workstreams" style="display:flex;gap:.5rem;flex-wrap:wrap"></div><p id="report-workstream-reminder" style="font-size:.8rem;color:var(--text-secondary);margin-top:.5rem">Choose a workstream when applicable to keep this report out of Unassigned.</p></fieldset>
       <div id="report-tag-picker" style="position:relative;width:100%"><div id="report-selected-tags" style="display:flex;gap:.35rem;flex-wrap:wrap;margin-bottom:.35rem"></div><input id="report-tags" class="search-box" placeholder="Add tags…" autocomplete="off" style="width:100%"><div id="report-tag-suggestions" style="display:none;position:absolute;top:100%;left:0;z-index:50;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;margin-top:2px;max-height:180px;overflow-y:auto;width:100%;box-shadow:var(--shadow)"></div></div>
       <input id="report-description" class="search-box" placeholder="Short description (optional)" style="grid-column:1 / -1;width:100%">
       <label id="report-file-label" style="grid-column:1 / -1;font-size:0.85rem;color:var(--text-secondary)">Report HTML file<br><input id="report-files" type="file" accept="text/html,.html,.htm" style="margin-top:0.35rem"><br><span style="font-size:0.8rem">Any HTML filename is accepted. For assets or multiple files, use the CLI uploader.</span></label>
       <input id="report-external-url" class="search-box" type="url" placeholder="https://external-report.example/" hidden style="grid-column:1 / -1;width:100%">
-      <button id="report-upload-btn" type="submit" style="justify-self:start;padding:0.45rem 1rem;background:#EE0000;color:#fff;border:none;border-radius:6px;font-size:0.8rem;font-weight:600;cursor:pointer">Upload report</button>
-      <span id="report-upload-status" style="align-self:center;font-size:0.8rem;color:var(--text-secondary)"></span>
+      <div class="report-form-actions">
+        <button id="report-upload-btn" type="submit" class="report-form-button">Upload report</button>
+        <button id="report-cancel-update" type="button" class="report-form-button report-form-button-secondary" hidden>Cancel update</button>
+        <span id="report-upload-status" style="font-size:0.8rem;color:var(--text-secondary)" role="status"></span>
+      </div>
     </form>
     <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem">Access Token Admin</h2>
     <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
@@ -545,9 +566,10 @@ function updateReport(id) {
   document.getElementById("report-description").value = report.description || "";
   document.getElementById("report-source").value = report.externalUrl ? "external" : "upload";
   document.getElementById("report-external-url").value = report.externalUrl || "";
-  document.getElementById("report-file-label").hidden = !!report.externalUrl;
-  document.getElementById("report-external-url").hidden = !report.externalUrl;
-  document.getElementById("report-upload-btn").textContent = `Upload revision ${Number(report.version || 1) + 1}`;
+  document.getElementById("report-files").value = "";
+  document.getElementById("report-update-metadata").checked = true;
+  document.getElementById("report-update-replacement").checked = false;
+  syncReportUpdateMode();
   document.getElementById("report-upload-form").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -644,8 +666,37 @@ function initReportTagPicker() {
   if (!input || input.dataset.bound) return;
   input.dataset.bound = "true";
 
+  const workstreamPicker = document.getElementById("report-workstreams");
+  WORKSTREAMS.forEach(workstream => {
+    const group = document.createElement("div");
+    const label = document.createElement("strong");
+    label.textContent = `${workstream.name}: `;
+    group.appendChild(label);
+    (workstream.match_tags || []).forEach(tag => {
+      const button = document.createElement("button");
+      button.type = "button"; button.className = "pill";
+      button.textContent = tag; button.dataset.workstreamTag = tag.toLowerCase();
+      button.addEventListener("click", () => {
+        const matches = [...selectedReportTags].filter(value => value.toLowerCase() === tag.toLowerCase());
+        if (matches.length) matches.forEach(value => selectedReportTags.delete(value));
+        else addTag(tag);
+        renderSelected();
+      });
+      group.appendChild(button);
+    });
+    workstreamPicker.appendChild(group);
+  });
   function normalise(tag) { return tag.trim().replace(/\s+/g, " ").slice(0, 40); }
   function renderSelected() {
+    const lowerTags = new Set([...selectedReportTags].map(tag => tag.toLowerCase()));
+    let assigned = false;
+    workstreamPicker.querySelectorAll("button").forEach(button => {
+      const selected = lowerTags.has(button.dataset.workstreamTag);
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-pressed", String(selected));
+      assigned = assigned || selected;
+    });
+    document.getElementById("report-workstream-reminder").hidden = assigned;
     const container = document.getElementById("report-selected-tags");
     container.innerHTML = "";
     selectedReportTags.forEach(tag => {
@@ -689,19 +740,47 @@ function initReportTagPicker() {
   renderSelected();
 }
 
+function syncReportUpdateMode() {
+  const metadataOnly = !!updatingReport && document.getElementById("report-update-metadata").checked;
+  const external = document.getElementById("report-source").value === "external";
+  document.getElementById("report-update-mode-label").hidden = !updatingReport;
+  document.getElementById("report-cancel-update").hidden = !updatingReport;
+  document.getElementById("report-source").disabled = metadataOnly;
+  // Visibility changes need a storage migration, not a metadata edit or revision.
+  document.getElementById("report-access").disabled = !!updatingReport;
+  document.getElementById("report-file-label").hidden = metadataOnly || external;
+  document.getElementById("report-external-url").hidden = metadataOnly || !external;
+  document.getElementById("report-files").disabled = metadataOnly || external;
+  document.getElementById("report-external-url").disabled = metadataOnly || !external;
+  document.getElementById("report-upload-btn").textContent = metadataOnly ? "Save report info" : updatingReport ? `Publish revision ${Number(updatingReport.version || 1) + 1}` : "Upload report";
+}
+
+function resetReportForm() {
+  const author = document.getElementById("report-author").value;
+  document.getElementById("report-upload-form").reset();
+  document.getElementById("report-author").value = author;
+  window.setReportTags([]);
+  updatingReport = null;
+  syncReportUpdateMode();
+}
+
 function initReportUpload() {
   const form = document.getElementById("report-upload-form");
   if (!form || form.dataset.bound) return;
   form.dataset.bound = "true";
-  const githubHandle = document.getElementById("report-author").value;
   const source = document.getElementById("report-source");
-  source.addEventListener("change", () => { const external = source.value === "external"; document.getElementById("report-file-label").hidden = external; document.getElementById("report-external-url").hidden = !external; });
+  source.addEventListener("change", syncReportUpdateMode);
+  document.getElementById("report-update-metadata").addEventListener("change", syncReportUpdateMode);
+  document.getElementById("report-update-replacement").addEventListener("change", syncReportUpdateMode);
+  document.getElementById("report-cancel-update").addEventListener("click", resetReportForm);
+  syncReportUpdateMode();
   form.addEventListener("submit", async event => {
     event.preventDefault();
     const button = document.getElementById("report-upload-btn");
     const status = document.getElementById("report-upload-status");
     const uploadOrigin = `https://${CF_DOMAIN}`;
-    if (source.value !== "external" && CF_DOMAIN && window.location.origin !== uploadOrigin) {
+    const metadataOnly = !!updatingReport && document.getElementById("report-update-metadata").checked;
+    if (!metadataOnly && source.value !== "external" && CF_DOMAIN && window.location.origin !== uploadOrigin) {
       const link = document.createElement("a");
       link.href = `${uploadOrigin}/admin/index.html?submit=1`;
       link.textContent = uploadOrigin;
@@ -723,11 +802,25 @@ function initReportUpload() {
     };
     button.disabled = true;
     try {
+      if (metadataOnly) {
+        status.textContent = "Saving report info…";
+        const access = updatingReport.authenticated ? "authenticated" : "public";
+        const result = await fetch(`${TOKEN_API}/reports?access=${access}&id=${encodeURIComponent(updatingReport.id)}`, {
+          method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "metadata", title: payload.title, category: payload.category, tags: payload.tags, description: payload.description }),
+        });
+        const data = await result.json();
+        if (!result.ok) throw new Error(data.error || "Could not save report info");
+        status.textContent = "Report info saved. Existing report files unchanged.";
+        resetReportForm();
+        await loadPublicEntries(); await loadPrivateEntries();
+        return;
+      }
       status.textContent = "Preparing secure upload…";
       const planResponse = await fetch(`${TOKEN_API}/reports`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const plan = await planResponse.json();
       if (!planResponse.ok) throw new Error(plan.error || "Could not prepare upload");
-      if (plan.external) { status.textContent = "Published."; form.reset(); window.setReportTags([]); updatingReport = null; await loadPublicEntries(); await loadPrivateEntries(); return; }
+      if (plan.external) { status.textContent = "Published."; resetReportForm(); await loadPublicEntries(); await loadPrivateEntries(); return; }
       const byName = new Map(files.map(item => [item.name, item.file]));
       let uploaded = 0;
       for (const target of plan.uploads) {
@@ -741,11 +834,7 @@ function initReportUpload() {
       const complete = await completeResponse.json();
       if (!completeResponse.ok) throw new Error(complete.error || "Could not publish report");
       status.textContent = "Published.";
-      form.reset();
-      window.setReportTags([]);
-      updatingReport = null;
-      document.getElementById("report-upload-btn").textContent = "Upload report";
-      document.getElementById("report-author").value = githubHandle;
+      resetReportForm();
       await loadPublicEntries(); await loadPrivateEntries();
     } catch (error) {
       status.textContent = error.message || "Upload failed.";

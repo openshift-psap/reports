@@ -94,7 +94,7 @@ function corsHeaders(origin) {
   return {
     'Access-Control-Allow-Origin': origin || '*',
     'Access-Control-Allow-Credentials': 'true',
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   };
 }
@@ -391,7 +391,7 @@ exports.handler = async (event) => {
     return response(200, { deleted: id }, origin);
   }
 
-  // PATCH /reports?access=public&id=... — retain files, mark an owned report archived.
+  // PATCH /reports?access=public&id=... — edit info or archive an owned report.
   if (method === 'PATCH' && isReportsPath) {
     const query = event.queryStringParameters || {};
     const access = query.access;
@@ -400,9 +400,28 @@ exports.handler = async (event) => {
     if (!authenticated.githubHandle) return response(403, { error: 'GitHub sign-in required' }, origin);
     let entry;
     try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
-    if (String(entry.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may archive only your own reports' }, origin);
-    entry.status = 'archived';
-    entry.archivedAt = new Date().toISOString();
+    if (String(entry.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may update only your own reports' }, origin);
+    const body = parseBody(event.body);
+    if (body.action === 'metadata') {
+      if (entry.isLatest === false) return response(409, { error: 'This is no longer the current revision' }, origin);
+      const allowed = new Set(['action', 'title', 'description', 'category', 'tags']);
+      if (Object.keys(body).some(key => !allowed.has(key))) return response(400, { error: 'Only title, description, category, and tags may be edited' }, origin);
+      const title = safeString(body.title, 180);
+      const category = safeString(body.category, 40);
+      if (!title) return response(400, { error: 'A report title is required' }, origin);
+      if (!REPORT_CATEGORIES.has(category)) return response(400, { error: 'Choose a supported category' }, origin);
+      if (!Array.isArray(body.tags) || body.tags.length > 20 || body.tags.some(tag => typeof tag !== 'string')) return response(400, { error: 'Choose at most 20 tags' }, origin);
+      entry.title = title;
+      entry.category = category;
+      entry.description = safeString(body.description, 1000);
+      entry.tags = [...new Set(body.tags.map(tag => safeString(tag, 40)).filter(Boolean))];
+      entry.updatedAt = new Date().toISOString();
+    } else if (!body.action || body.action === 'archive') {
+      entry.status = 'archived';
+      entry.archivedAt = new Date().toISOString();
+    } else {
+      return response(400, { error: 'Unsupported report update action' }, origin);
+    }
     await putJson(`report-meta/${access}/${id}.json`, entry);
     return response(200, { report: entry }, origin);
   }

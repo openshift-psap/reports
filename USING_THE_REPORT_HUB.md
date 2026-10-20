@@ -39,7 +39,7 @@ An expired or revoked token prevents future sign-ins with it. Browser sessions c
 ## Submit a report
 
 1. Open <https://reports.psap.aws.rhperfscale.org/admin/index.html> and sign in.
-2. Under **Submit a report**, enter the title, category, optional tags/description, and visibility (**Red Hat Internal** or **Public**). The tag picker suggests tags already used in the hub; choose several, or type a new tag and press Enter. Add `rhoai`, `llm-d`, `rhaii`, or `rhaiis` as tags when they apply. The submitter is automatically recorded as your verified GitHub handle, and the service records the UTC submission time.
+2. Under **Submit a report**, enter the title, category, optional tags/description, and visibility (**Red Hat Internal** or **Public**). Select matching **Workstream** buttons (`rhoai`, `llm-d`, `rhaii`, or `rhaiis`) when applicable; multiple selections are allowed. These add ordinary tags. The tag picker suggests other tags already used in the hub; choose several, or type a new tag and press Enter. The submitter is automatically recorded as your verified GitHub handle, and the service records the UTC submission time.
 3. Use the file picker to select one self-contained HTML report; its filename does not matter. For a report with relative assets or multiple files, use the CLI uploader and designate its HTML entry file.
 4. Select **Upload report** and leave the page open until it says **Published**.
 
@@ -84,7 +84,9 @@ Use **Archive** instead to retire an old or deprecated report without deleting i
 
 ## Update a report
 
-Owners can select **Update** on a current report. The form is pre-filled, and uploading the replacement bundle creates a new immutable revision. The updated revision becomes the card shown in the hub; the prior files and metadata are retained for audit and future version-history presentation.
+Owners can select **Update** on a current report. The form is pre-filled and the **Update report** radio buttons default to **Edit info only — keep existing report**. Change the title, description, category, or tags (including the visible **Workstream** choices), then select **Save report info**. No file selection or upload is needed: the existing files or external link, report URL, author, submission date, and content revision number remain unchanged. Info edits update the current revision's metadata in place, not historical revisions.
+
+Choose **Replace report / change link** to publish new content instead. Uploading the replacement bundle creates a new immutable content revision. The updated revision becomes the card shown in the hub; the prior files and metadata are retained for audit and version history. Visibility cannot be changed while updating a report. Select **Cancel update**, beside the save/publish button, to return to a fresh submission.
 
 When a report has more than one revision, its card shows **Versions**. The dialog lists every retained revision and provides a direct link to each one. Authenticated users also see the stable report ID on cards; use it when referring to a report in automation or support requests.
 
