@@ -36,6 +36,12 @@ Do not commit report HTML, assets, or private report metadata to this repository
 - `_generator/s3_config.json` — S3 bucket, region, CloudFront domain
 - AWS access is provided by the restricted `github-actions-psap-reports-deploy` OIDC role; no repository AWS secrets are required.
 
+## Local checks
+
+Run `node --test tests/*.test.js` for API and form behavior tests (no AWS access or installed dependencies required), and `python3 _generator/generate_index.py` to generate the hub shell locally. The form tests use a lightweight DOM stub; they do not replace a live browser smoke test.
+
+For the metadata-edit feature, deploy the updated token-admin Lambda **before** publishing the updated hub shell. The previous Lambda interprets all report PATCH requests as archive requests; the new Lambda distinguishes metadata edits from archiving. The site workflow deploys only the shell, not the Lambda.
+
 ## Architecture decisions
 
 ### Client-side index (no pagination)
