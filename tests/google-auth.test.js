@@ -458,7 +458,8 @@ test('deployment sources route and parameterize the recovered Google/session fea
   ]) {
     assert.match(renderer, new RegExp(`"${placeholder}":`));
   }
-  assert.match(renderer, /json\.dumps\(os\.environ\.get\(variable, ""\)\)/);
+  assert.match(renderer, /json\.dumps\(values\[tokens\[match\.group\(0\)\]\]\)/);
+  assert.match(renderer, /pattern\.sub\(/, 'placeholders must be substituted in a single pass over the original source');
   assert.match(fs.readFileSync('_infra/lambda-auth/package.json', 'utf8'), /"google-auth-library": "\^10\.9\.1"/);
   assert.match(fs.readFileSync('_infra/lambda-auth/package-lock.json', 'utf8'), /"node_modules\/google-auth-library"/);
 });

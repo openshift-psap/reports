@@ -4,11 +4,14 @@
 The deployment script passes configuration through the environment. Values are
 embedded with json.dumps, so quotes, backslashes, ampersands, pipes, newlines,
 and other special characters cannot corrupt the JavaScript source or shell
-substitution. Values are never printed.
+substitution. Placeholders are replaced in a single pass over the original
+source, so a value that looks like a placeholder is never substituted again.
+Values are never printed.
 """
 
 import json
 import os
+import re
 import sys
 
 # Placeholder in _infra/lambda-auth/index.js -> environment variable.
@@ -44,11 +47,14 @@ def main():
         if not os.environ.get(variable):
             raise SystemExit(f"{variable} is required")
 
-    for placeholder, variable in PLACEHOLDERS.items():
-        token = f"'{placeholder}'"
+    tokens = {f"'{placeholder}'": variable for placeholder, variable in PLACEHOLDERS.items()}
+    for token in tokens:
         if token not in source:
-            raise SystemExit(f"missing placeholder {placeholder}")
-        source = source.replace(token, json.dumps(os.environ.get(variable, "")))
+            raise SystemExit(f"missing placeholder {token[1:-1]}")
+
+    values = {variable: os.environ.get(variable, "") for variable in PLACEHOLDERS.values()}
+    pattern = re.compile("|".join(re.escape(token) for token in sorted(tokens, key=len, reverse=True)))
+    source = pattern.sub(lambda match: json.dumps(values[tokens[match.group(0)]]), source)
 
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(source)

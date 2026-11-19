@@ -411,13 +411,20 @@ function reportsApiUrl(access) {
   return `${window.location.origin}/_admin-api/reports?access=${encodeURIComponent(access)}`;
 }
 
+function replaceReportEntries(isPrivate, entries) {
+  const others = REPORTS.filter(r => Boolean(r.authenticated) !== isPrivate);
+  REPORTS.splice(0, REPORTS.length, ...others, ...entries);
+  REPORTS.sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
+  rebuildFilters();
+  render();
+}
+
 async function loadPublicEntries() {
   try {
     const resp = await fetch(reportsApiUrl("public"));
     if (!resp.ok) return;
     const data = await resp.json();
-    REPORTS.splice(0, REPORTS.length, ...(data.reports || []));
-    rebuildFilters(); render();
+    replaceReportEntries(false, data.reports || []);
   } catch (e) { /* temporary API/network error */ }
 }
 
@@ -426,11 +433,7 @@ async function loadPrivateEntries() {
     const resp = await fetch(reportsApiUrl("authenticated"), { credentials: "include" });
     if (!resp.ok) return;
     const data = await resp.json();
-    const entries = data.reports || [];
-    entries.forEach(e => REPORTS.push(e));
-    REPORTS.sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
-    rebuildFilters();
-    render();
+    replaceReportEntries(true, data.reports || []);
   } catch (e) { /* not authenticated or network error */ }
 }
 
