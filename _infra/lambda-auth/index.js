@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const https = require('https');
 const querystring = require('querystring');
+const { OAuth2Client } = require('google-auth-library');
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 
 const CONFIG = {
@@ -20,7 +21,17 @@ const CONFIG = {
   tokenPath: '/_auth/token',
   logoutPath: '/_auth/logout',
   publicManifestPath: '/public-reports.json',
+  canonicalDomain: '__CANONICAL_DOMAIN__',
+  googleClientId: '__GOOGLE_CLIENT_ID__',
+  googleClientSecret: '__GOOGLE_CLIENT_SECRET__',
 };
+
+const GOOGLE_PATH = '/_auth/google';
+const GOOGLE_CALLBACK = '/_auth/google/callback';
+const GOOGLE_FLOW_COOKIE = 'psap_google_flow';
+const configured = value => value && !value.startsWith('__');
+const googleEnabled = () => configured(CONFIG.googleClientId) && configured(CONFIG.googleClientSecret) &&
+  configured(CONFIG.canonicalDomain);
 
 const CACHE = { tokens: null, tokensAt: 0, allowlist: null, allowlistAt: 0, publicPaths: null, publicPathsAt: 0 };
 const CACHE_TTL = 60000;
@@ -102,7 +113,7 @@ function verifyCookie(signed) {
   if (signCookie(value) !== signed) return null;
 
   const [authenticated, method, issuedAt, githubHandle] = value.split(':');
-  const maxAge = method === 'github' ? CONFIG.githubCookieMaxAge :
+  const maxAge = method === 'github' || method === 'google' ? CONFIG.githubCookieMaxAge :
     method === 'token' ? CONFIG.tokenCookieMaxAge : 0;
   if (authenticated !== 'authenticated' || !maxAge || !/^\d+$/.test(issuedAt || '')) return null;
   if (Date.now() > Number(issuedAt) + maxAge * 1000) return null;
@@ -121,15 +132,16 @@ function parseCookies(headers) {
 }
 
 function setAuthCookie(redirectTo, method, githubHandle) {
-  const maxAge = method === 'github' ? CONFIG.githubCookieMaxAge : CONFIG.tokenCookieMaxAge;
+  const maxAge = method === 'github' || method === 'google' ? CONFIG.githubCookieMaxAge : CONFIG.tokenCookieMaxAge;
   const expires = new Date(Date.now() + maxAge * 1000).toUTCString();
-  const subject = method === 'github' && githubHandle ? `:${githubHandle.toLowerCase()}` : '';
+  const subject = ['github', 'google'].includes(method) && githubHandle ? `:${githubHandle.toLowerCase()}` : '';
   const cookieValue = signCookie(`authenticated:${method}:${Date.now()}${subject}`);
   return {
     status: '302',
     statusDescription: 'Found',
     headers: {
       location: [{ key: 'Location', value: redirectTo || '/' }],
+      'cache-control': [{ key: 'Cache-Control', value: 'no-store' }],
       'set-cookie': [{
         key: 'Set-Cookie',
         value: `${CONFIG.cookieName}=${cookieValue}; Path=/; Expires=${expires}; Secure; HttpOnly; SameSite=Lax`,
@@ -177,14 +189,17 @@ body{font-family:"Red Hat Text","Helvetica Neue",Arial,sans-serif;background:#ff
 .token-input:focus{outline:none;border-color:#EE0000;box-shadow:0 0 0 3px rgba(238,0,0,0.12)}
 .token-btn{padding:0.55rem 1rem;background:#EE0000;color:#fff;border:none;border-radius:6px;font-size:0.85rem;font-weight:600;cursor:pointer}
 .token-btn:hover{background:#cc0000}
+.requirement{background:#f5f5f5;border-left:3px solid #EE0000;border-radius:4px;padding:0.65rem 0.85rem;margin-bottom:1.25rem;font-size:0.82rem;color:#3c3f42;line-height:1.45}
 footer{text-align:center;padding:1rem;font-size:0.7rem;color:#888;border-top:1px solid #d2d2d2}
 </style></head><body>
 <div class="site-header"><div class="c"><a class="brand" href="/">PSAP<span>Report Hub</span></a></div></div>
 <div class="main"><div class="card">
-<h2>Sign in to view reports</h2>
-<p>PSAP team members can sign in with GitHub. Red Hat employees can use an access token.</p>
+<h2>Sign in to PSAP Report Hub</h2>
+<p>PSAP team members can sign in with GitHub. ${googleEnabled() ? 'Red Hat employees can sign in with Google for view-only access, or use an access token.' : 'Red Hat employees can use an access token.'}</p>
+<div class="requirement"><strong>To upload reports</strong>, sign in with GitHub as an <strong>openshift-psap</strong> organization member (allowlisted GitHub accounts are also permitted). Access tokens and other sign-in methods cannot upload reports.</div>
 <p style="font-size:0.8rem;color:#6a6e73;margin-top:-0.5rem">Don't have a token? Reach out to <strong>#forum-psap</strong> on Slack to request access.</p>
 ${errorHtml}
+${googleEnabled() ? `<a class="gh-btn" style="margin-bottom:1rem" href="${GOOGLE_PATH}?state=${encodeURIComponent(safeReturnPath(returnPath))}">Sign in with Google (view only)</a>` : ''}
 <a class="gh-btn" href="/_auth/github?state=${encodeURIComponent(returnPath || '/')}">
 <svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
 Sign in with GitHub</a>
@@ -195,7 +210,7 @@ Sign in with GitHub</a>
 <button class="token-btn" type="submit">Enter</button>
 </form>
 </div></div>
-<footer>Performance &amp; Scale for AI Platforms</footer>
+<footer>Performance &amp; Scale for AI Platforms · <a href="/privacy.html">Privacy Policy</a></footer>
 </body></html>`;
   return {
     status: '200',
@@ -216,8 +231,54 @@ function requestBody(request) {
 }
 
 function safeReturnPath(value) {
-  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.startsWith('/_auth/')) return '/';
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || /[\\\x00-\x20]/.test(value) || value.startsWith('/_auth/')) return '/';
   return value;
+}
+
+async function googleLogin(request) {
+  const params = querystring.parse(request.querystring || '');
+  const redirectUri = `https://${CONFIG.canonicalDomain}${GOOGLE_CALLBACK}`;
+  const client = new OAuth2Client(CONFIG.googleClientId, CONFIG.googleClientSecret, redirectUri);
+  const cookie = (value, age) => ({ key: 'Set-Cookie', value: `${GOOGLE_FLOW_COOKIE}=${value}; Path=${GOOGLE_CALLBACK}; Max-Age=${age}; Secure; HttpOnly; SameSite=Lax` });
+  if (request.uri === GOOGLE_PATH) {
+    const flow = {
+      state: crypto.randomBytes(32).toString('base64url'),
+      nonce: crypto.randomBytes(32).toString('base64url'),
+      verifier: crypto.randomBytes(32).toString('base64url'),
+      returnPath: safeReturnPath(params.state), expires: Date.now() + 600000,
+    };
+    const url = client.generateAuthUrl({
+      scope: ['openid', 'email'], state: flow.state, nonce: flow.nonce,
+      hd: 'redhat.com', prompt: 'select_account',
+      code_challenge: crypto.createHash('sha256').update(flow.verifier).digest('base64url'),
+      code_challenge_method: 'S256',
+    });
+    return { status: '302', headers: {
+      location: [{ key: 'Location', value: url }],
+      'cache-control': [{ key: 'Cache-Control', value: 'no-store' }],
+      'set-cookie': [cookie(signCookie(Buffer.from(JSON.stringify(flow)).toString('base64url')), 600)],
+    } };
+  }
+  let result;
+  try {
+    const signed = parseCookies(request.headers)[GOOGLE_FLOW_COOKIE] || '';
+    const value = signed.substring(0, signed.lastIndexOf('.'));
+    if (!signed || signCookie(value) !== signed) throw new Error('Invalid transaction');
+    const flow = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (flow.expires < Date.now() || !params.state || params.state !== flow.state || typeof params.code !== 'string' || params.error) throw new Error('Invalid callback');
+    const { tokens } = await client.getToken({ code: params.code, codeVerifier: flow.verifier });
+    const ticket = await client.verifyIdToken({ idToken: tokens.id_token, audience: CONFIG.googleClientId });
+    const claims = ticket.getPayload();
+    if (claims.nonce !== flow.nonce || claims.email_verified !== true || claims.hd !== 'redhat.com' ||
+        typeof claims.email !== 'string' || !/^[^@:\s]+@redhat\.com$/i.test(claims.email)) throw new Error('Account not permitted');
+    result = setAuthCookie(safeReturnPath(flow.returnPath), 'google', claims.email);
+  } catch (_) {
+    // Never log authorization codes, tokens, claims, or provider error details.
+    result = loginPage('/', 'Google sign-in failed. Use your verified redhat.com Google Workspace account and try again.');
+  }
+  result.headers['cache-control'] = [{ key: 'Cache-Control', value: 'no-store' }];
+  (result.headers['set-cookie'] ||= []).push(cookie('', 0));
+  return result;
 }
 
 exports.handler = async (event) => {
@@ -225,10 +286,26 @@ exports.handler = async (event) => {
   const headers = request.headers;
   const uri = request.uri;
 
+  // Redirect raw CloudFront domain to the canonical custom domain so that
+  // OAuth callbacks, API endpoints, and uploads work correctly.
+  const host = headers.host && headers.host[0] && headers.host[0].value;
+  const canonicalDomainConfigured = configured(CONFIG.canonicalDomain);
+  if (host && host.endsWith('.cloudfront.net') && canonicalDomainConfigured) {
+    const qs = request.querystring ? `?${request.querystring}` : '';
+    return {
+      status: '301',
+      statusDescription: 'Moved Permanently',
+      headers: {
+        location: [{ key: 'Location', value: `https://${CONFIG.canonicalDomain}${uri}${qs}` }],
+        'cache-control': [{ key: 'Cache-Control', value: 'max-age=86400' }],
+      },
+    };
+  }
+
   // The hub shell, public reports, and the unauthenticated public-report index
   // endpoint are deliberately public. Private reports live exclusively below
   // /private/ and are never included here.
-  if (uri === '/' || uri === '/index.html' || uri.startsWith('/public/')) return request;
+  if (uri === '/' || uri === '/index.html' || uri === '/privacy.html' || uri.startsWith('/public/')) return request;
   if (uri === '/_admin-api/reports' && request.method === 'GET' &&
       /(^|&)access=public(&|$)/.test(request.querystring || '')) return request;
   if (uri === CONFIG.publicManifestPath) return request;
@@ -236,6 +313,8 @@ exports.handler = async (event) => {
 
   // End the browser session without affecting the underlying GitHub OAuth grant.
   if (uri === CONFIG.logoutPath) return clearAuthCookie('/');
+
+  if (googleEnabled() && (uri === GOOGLE_PATH || uri === GOOGLE_CALLBACK)) return googleLogin(request);
 
   // This endpoint exists only as the target of the token form POST. Serving a
   // login page for a direct GET prevents an authenticated browser from being
@@ -296,7 +375,7 @@ exports.handler = async (event) => {
       return setAuthCookie(params.state, 'github', username);
     }
 
-    return loginPage(params.state, `Access denied: ${username} is not authorized. Reach out to <strong>#forum-psap</strong> on Slack to request access.`);
+    return loginPage(params.state, `Access denied: ${username} is not an <strong>openshift-psap</strong> organization member or an allowlisted account. Reach out to <strong>#forum-psap</strong> on Slack to request access.`);
   }
 
   // Token validation (POST)
@@ -318,7 +397,19 @@ exports.handler = async (event) => {
   // Check existing auth cookie
   const cookies = parseCookies(headers);
   const authCookie = cookies[CONFIG.cookieName];
-  if (authCookie && verifyCookie(authCookie)) return request;
+  const principal = authCookie && verifyCookie(authCookie);
+  if (principal) {
+    if (principal.method === 'google') {
+      // Do not expose origin auth data or submission objects to Google readers.
+      const readable = ['GET', 'HEAD'].includes(request.method) &&
+        (uri.startsWith('/private/') || uri === '/admin/index.html' ||
+          uri === '/_admin-api/session' || uri === '/_admin-api/reports');
+      if (!readable) return { status: '403', headers: {
+        'cache-control': [{ key: 'Cache-Control', value: 'no-store' }],
+      }, body: 'Google sign-in provides view-only report access.' };
+    }
+    return request;
+  }
 
   // Not authenticated — show login page
   const returnPath = uri + (request.querystring ? '?' + request.querystring : '');
