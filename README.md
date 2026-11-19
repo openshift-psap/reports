@@ -2,7 +2,7 @@
 
 Report hub and report bundles are served from private S3 through CloudFront. Git contains the application and infrastructure code, never report content.
 
-See [Using the PSAP Report Hub](USING_THE_REPORT_HUB.md) for browsing, sign-in, token management, and report publishing instructions.
+See [Using the PSAP Report Hub](USING_THE_REPORT_HUB.md) for browsing, sign-in, token management, and report publishing instructions. For command-line uploads, including authentication, limits, and automation constraints, see the [CLI guide](CLI.md).
 
 ## How it works
 

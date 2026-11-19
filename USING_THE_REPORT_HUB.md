@@ -48,24 +48,21 @@ The browser uploads directly to S3 using URLs that expire after 15 minutes. Repo
 
 Choose **External HTTPS link** instead of Upload HTML to index a report hosted elsewhere. An entry is either one external HTTPS URL or uploaded report content—never both.
 
-### CLI upload for automation and multi-file reports
+### CLI upload for multi-file reports and local automation
 
-The CLI is the preferred uploader for report directories with assets, agent workflows, and CI automation. It uses GitHub OAuth Device Flow, verifies `openshift-psap` membership, and records the authenticated GitHub handle as submitter.
+Use the repository's CLI uploader for a report directory with relative assets or for scripted publishing from your machine. The script must remain in an intact checkout, but it may be invoked from any directory; cloning, `--help`, login, options, limits, and troubleshooting are documented in the [CLI guide](CLI.md). Local agents must obtain explicit user approval for each upload, whether internal/private or public, including the exact bundle, entry page, metadata, and visibility; see the [agent upload guidance](CLI.md#local-coding-agents).
 
 ```bash
 ./bin/psap-report --login
-./bin/psap-report ./standalone-report.html \
-  --title "Standalone report" --category investigations --tags "rhoai"
 ./bin/psap-report ./rendered-report \
-  --entry-file report.html \
+  --entry-file index.html \
   --title "Inference benchmark" \
   --category benchmarks \
-  --access internal \
   --tags "llm-d,gpu" \
   --description "Automated benchmark report"
 ```
 
-Authentication is stored locally at `~/.config/psap-report/github-oauth.json` with owner-only permissions. Re-run `--login` to authenticate a different GitHub account.
+The CLI creates new reports only; use the browser controls in this guide to edit metadata, replace content, archive, or delete. CLI uploads require an `openshift-psap` GitHub account authenticated through Device Flow. Google view-only and `psap_rht_` token sessions cannot upload. Authentication is cached at `~/.config/psap-report/github-oauth.json` with owner-only permissions; re-run `--login` to switch accounts. No AWS credentials are required. Unattended CI login is not yet supported; see the CLI guide.
 
 ## Sign out
 
