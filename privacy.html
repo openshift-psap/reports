@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Privacy and responsible sharing rules for PSAP Report Hub uploaders and viewers.">
+  <title>Privacy and Use Policy — PSAP Report Hub</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #151515; background: #fff; font: 1rem/1.65 system-ui, sans-serif; }
+    header { background: #151515; border-bottom: 3px solid #e00; padding: 1rem; }
+    header a { color: #fff; font-size: 1.2rem; font-weight: 700; text-decoration: none; }
+    header div, main, footer { max-width: 800px; margin: auto; }
+    main { padding: 2rem 1rem 3rem; }
+    h1, h2 { line-height: 1.25; }
+    h1 { margin-bottom: .5rem; }
+    h2 { margin-top: 2rem; font-size: 1.3rem; }
+    a { color: #a30000; overflow-wrap: anywhere; }
+    a:focus-visible { outline: 3px solid #06c; outline-offset: 3px; }
+    li { margin-bottom: .5rem; }
+    code { overflow-wrap: anywhere; }
+    .muted { color: #555; }
+    .notice { border-left: 4px solid #b05b00; background: #fff7e6; padding: 1rem; }
+    footer { padding: 1.5rem 1rem; border-top: 1px solid #d2d2d2; font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <header><div><a href="/">PSAP Report Hub</a></div></header>
+  <main>
+    <h1>Privacy and Use Policy</h1>
+    <p class="muted">Interim policy · Updated October 20, 2026</p>
+    <p class="notice"><strong>Interim policy.</strong> A formally reviewed policy is being tracked in <a href="https://github.com/openshift-psap/reports/issues/7">GitHub issue #7</a>. This page will be updated following that review.</p>
+
+    <p>These rules apply to the <a href="https://reports.psap.aws.rhperfscale.org/">PSAP Report Hub</a>. Access to a report does not grant permission to redistribute it.</p>
+
+    <h2>For uploaders</h2>
+    <ul>
+      <li>Submit only material you are authorized to share through this service.</li>
+      <li><strong>If anything is even potentially sensitive, do not submit or update it as Public.</strong> This includes report content, attachments, titles, descriptions, tags, and linked material. If in doubt, keep it private and seek approval.</li>
+      <li>Private visibility does not override confidentiality, customer-data, security, or other applicable handling requirements. Do not upload material that this service is not authorized to hold.</li>
+      <li>Review every update before publishing. Previously public copies may remain outside the hub even after removal.</li>
+    </ul>
+
+    <h2>For viewers</h2>
+    <ul>
+      <li><strong>Do not download, copy, or redistribute materials outside the approved sharing channels without express authorization from the content owner or another authorized approver.</strong></li>
+      <li>Share the report's hub link instead of exporting or forwarding its contents. Do not share sign-in credentials or access tokens to bypass access controls.</li>
+      <li>The hub checks access to private reports when recipients open their links. <strong>Public reports are available without sign-in</strong>; sharing their links does not impose an identity check.</li>
+    </ul>
+    <p>These are usage obligations, not a technical download-prevention feature. Any separately applicable license or explicit sharing authorization must also be respected.</p>
+
+    <h2>Privacy: what we use and why</h2>
+    <p>Google sign-in requests only <code>openid email</code>. The hub processes your email, verification status, Workspace domain, and identity-token claims to verify a <code>redhat.com</code> Workspace account and provide view-only access. It does not request Gmail, Drive, contacts, or profile access. Your email is displayed to you and included in a signed session cookie, not a separate Google user database. Google tokens are processed during sign-in, not intentionally stored in application storage or logged. Google sign-in data is not sold or used for advertising by the hub.</p>
+    <p>GitHub sign-in uses your username and organization membership or allowlist status. Publisher usernames, report content and metadata, access-token digests and administrative details, and operational logs are processed to run and secure the service. Logs may contain usernames, request paths, errors, and technical request information.</p>
+    <p>The hub is hosted on AWS, with application storage in US East (N. Virginia) and distributed CloudFront and Lambda@Edge request processing. Authorized administrators can access stored information for operation and support. Google and GitHub handle sign-in under <a href="https://policies.google.com/privacy">Google's Privacy Policy</a> and <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub's Privacy Statement</a>. Individual reports and external websites may use additional services under their own policies.</p>
+
+    <h2>Cookies, retention, and your choices</h2>
+    <p>The <code>psap_auth</code> cookie lasts up to one day for Google/GitHub or seven days for access-token sign-in. The Google security cookie <code>psap_google_flow</code> lasts up to ten minutes. Both are Secure, HttpOnly, SameSite=Lax, and signed, not encrypted. The hub does not install advertising or third-party analytics cookies.</p>
+    <p>Sign out to clear your session. You can also clear cookies and remove the hub from <a href="https://myaccount.google.com/connections">Google Account connections</a>; revocation alone does not clear an existing hub session. Reports, revisions, metadata, and token records remain until administratively removed. Some operational logs have no configured automatic expiration. Contact the maintainers to request review, correction, or removal of stored information.</p>
+
+    <h2>Contact and changes</h2>
+    <p>For privacy questions or requests to review, correct, or remove stored information, contact <a href="mailto:thibrahi@redhat.com">thibrahi@redhat.com</a>. Red Hat users can also reach the maintainers through <strong>#forum-psap</strong> on internal Slack. Do not include passwords, access tokens, or OAuth callback URLs in a request.</p>
+    <p>Changes to this policy will be posted on this page with an updated date.</p>
+  </main>
+  <footer><a href="/">Back to the Report Hub</a> · Performance &amp; Scale for AI Platforms</footer>
+</body>
+</html>

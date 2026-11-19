@@ -54,11 +54,12 @@ function verifyCookie(signed) {
   const expected = value + '.' + hmac.digest('base64url');
   if (expected !== signed) return false;
   const [authenticated, method, issuedAt, githubHandle] = value.split(':');
-  const maxAge = method === 'github' ? GITHUB_COOKIE_MAX_AGE :
+  const maxAge = method === 'github' || method === 'google' ? GITHUB_COOKIE_MAX_AGE :
     method === 'token' ? TOKEN_COOKIE_MAX_AGE : 0;
   if (!(authenticated === 'authenticated' && maxAge > 0 && /^\d+$/.test(issuedAt || '') &&
     Date.now() <= Number(issuedAt) + maxAge * 1000)) return null;
-  return { method, githubHandle: method === 'github' ? githubHandle || null : null };
+  return { method, githubHandle: method === 'github' ? githubHandle || null : null,
+    email: method === 'google' ? githubHandle || null : null };
 }
 
 function parseCookies(cookieHeader) {
@@ -102,7 +103,7 @@ function corsHeaders(origin) {
 function response(statusCode, body, origin) {
   return {
     statusCode,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders(origin) },
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...corsHeaders(origin) },
     body: JSON.stringify(body),
   };
 }
@@ -292,6 +293,15 @@ exports.handler = async (event) => {
   }
 
   const isTokensPath = path.endsWith('/tokens');
+
+  // Session identity is separate from token administration for read-only users.
+  if (method === 'GET' && path.endsWith('/session')) {
+    return response(200, { method: authenticated.method, githubHandle: authenticated.githubHandle,
+      email: authenticated.email || null, viewOnly: authenticated.method === 'google' }, origin);
+  }
+  if (authenticated.method === 'google' && !(method === 'GET' && isReportsPath)) {
+    return response(403, { error: 'Google sign-in provides view-only report access' }, origin);
+  }
 
   // GET /reports?access=authenticated — list private report metadata.
   if (method === 'GET' && isReportsPath) {

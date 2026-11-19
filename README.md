@@ -9,7 +9,7 @@ See [Using the PSAP Report Hub](USING_THE_REPORT_HUB.md) for browsing, sign-in, 
 1. **Report bundles live only in S3** — submitters upload an `index.html` bundle through the protected hub.
 2. **The repository deploys the hub shell** — GitHub Actions uses OIDC to publish the application UI and infrastructure-controlled artifacts.
 3. **Metadata is per-report** — S3 objects under `report-meta/public/` and `report-meta/private/` power the dynamic index without a shared mutable manifest.
-4. **Auth via CloudFront** — `private/` reports are gated by GitHub OAuth or an access token; `public/` reports are deliberately anonymous.
+4. **Auth via CloudFront** — `private/` reports are gated by GitHub OAuth, verified `redhat.com` Google sign-in (view only), or an access token; `public/` reports are deliberately anonymous.
 
 ## Adding a report
 
@@ -21,7 +21,7 @@ Do not commit report HTML, assets, or private report metadata to this repository
 
 | `access` value | Behavior |
 |----------------|----------|
-| `"authenticated"` | GitHub OAuth required (default) |
+| `"authenticated"` | GitHub OAuth required (default); verified `redhat.com` Google sign-in can view but not publish |
 | `"public"` | Served without auth via CloudFront |
 
 ## Categories
@@ -34,6 +34,7 @@ Do not commit report HTML, assets, or private report metadata to this repository
 ## Configuration
 
 - `_generator/s3_config.json` — S3 bucket, region, CloudFront domain
+- `_infra/deploy-auth-lambda.sh` — reads `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `COOKIE_SECRET`; optional `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` enable verified `redhat.com` view-only sign-in. `CANONICAL_DOMAIN` defaults to `cloudfront_domain`.
 - AWS access is provided by the restricted `github-actions-psap-reports-deploy` OIDC role; no repository AWS secrets are required.
 
 ## Local checks

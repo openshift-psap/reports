@@ -74,6 +74,14 @@ if [ -z "$TOKENS_ID" ] || [ "$TOKENS_ID" = "None" ]; then
   TOKENS_ID=$(aws apigateway create-resource --rest-api-id "$API_ID" --parent-id "$PREFIX_ID" --path-part tokens --query id --output text)
 fi
 INTEGRATION_URI="arn:aws:apigateway:${REGION}:lambda:path/2015-03-31/functions/${FUNCTION_ARN}/invocations"
+SESSION_ID=$(aws apigateway get-resources --rest-api-id "$API_ID" --query "items[?path=='$ROUTE_PREFIX/session'].id | [0]" --output text)
+if [ -z "$SESSION_ID" ] || [ "$SESSION_ID" = "None" ]; then
+  SESSION_ID=$(aws apigateway create-resource --rest-api-id "$API_ID" --parent-id "$PREFIX_ID" --path-part session --query id --output text)
+fi
+if ! aws apigateway get-method --rest-api-id "$API_ID" --resource-id "$SESSION_ID" --http-method GET >/dev/null 2>&1; then
+  aws apigateway put-method --rest-api-id "$API_ID" --resource-id "$SESSION_ID" --http-method GET --authorization-type NONE --no-api-key-required >/dev/null
+fi
+aws apigateway put-integration --rest-api-id "$API_ID" --resource-id "$SESSION_ID" --http-method GET --type AWS_PROXY --integration-http-method POST --uri "$INTEGRATION_URI" >/dev/null
 for method in GET POST DELETE; do
   if ! aws apigateway get-method --rest-api-id "$API_ID" --resource-id "$TOKENS_ID" --http-method "$method" >/dev/null 2>&1; then
     aws apigateway put-method --rest-api-id "$API_ID" --resource-id "$TOKENS_ID" --http-method "$method" --authorization-type NONE --no-api-key-required >/dev/null

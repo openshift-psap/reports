@@ -245,7 +245,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
     </table>
   </div>
 
-  <footer>Generated __GENERATED_AT__ &middot; __REPORT_COUNT__ reports indexed</footer>
+  <footer>Generated __GENERATED_AT__ &middot; __REPORT_COUNT__ reports indexed &middot; <a href="/privacy.html">Privacy Policy</a></footer>
 </div>
 
 <script>
@@ -411,13 +411,20 @@ function reportsApiUrl(access) {
   return `${window.location.origin}/_admin-api/reports?access=${encodeURIComponent(access)}`;
 }
 
+function replaceReportEntries(isPrivate, entries) {
+  const others = REPORTS.filter(r => Boolean(r.authenticated) !== isPrivate);
+  REPORTS.splice(0, REPORTS.length, ...others, ...entries);
+  REPORTS.sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
+  rebuildFilters();
+  render();
+}
+
 async function loadPublicEntries() {
   try {
     const resp = await fetch(reportsApiUrl("public"));
     if (!resp.ok) return;
     const data = await resp.json();
-    REPORTS.splice(0, REPORTS.length, ...(data.reports || []));
-    rebuildFilters(); render();
+    replaceReportEntries(false, data.reports || []);
   } catch (e) { /* temporary API/network error */ }
 }
 
@@ -426,11 +433,7 @@ async function loadPrivateEntries() {
     const resp = await fetch(reportsApiUrl("authenticated"), { credentials: "include" });
     if (!resp.ok) return;
     const data = await resp.json();
-    const entries = data.reports || [];
-    entries.forEach(e => REPORTS.push(e));
-    REPORTS.sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
-    rebuildFilters();
-    render();
+    replaceReportEntries(true, data.reports || []);
   } catch (e) { /* not authenticated or network error */ }
 }
 
@@ -605,10 +608,20 @@ async function initAdmin() {
     return;
   }
   try {
-    const resp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
+    const resp = await fetch(`${TOKEN_API}/session`, { credentials: "include" });
     if (!resp.ok) return;
     const data = await resp.json();
     isAuthenticated = true;
+    if (data.viewOnly) {
+      document.getElementById("auth-status").textContent = `Signed in as ${data.email} (view only)`;
+      document.getElementById("signin-link").hidden = true;
+      document.getElementById("signout-link").hidden = false;
+      document.getElementById("submit-link").hidden = true;
+      document.getElementById("submit-signin").hidden = true;
+      render();
+      await loadPrivateEntries();
+      return;
+    }
     panel.hidden = false;
     document.getElementById("submit-signin").hidden = true;
     const submitter = document.getElementById("report-author");
@@ -621,7 +634,8 @@ async function initAdmin() {
     submitter.placeholder = data.githubHandle ? "" : "GitHub sign-in required to submit";
     document.getElementById("report-upload-form").hidden = !data.githubHandle;
     document.getElementById("report-oauth-required").hidden = !!data.githubHandle;
-    renderTokenTable(data.tokens);
+    const tokenResp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
+    if (tokenResp.ok) renderTokenTable((await tokenResp.json()).tokens);
     render();
     loadPrivateEntries();
     initReportTagPicker();

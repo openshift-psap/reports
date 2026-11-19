@@ -13,6 +13,15 @@ DIST_ID="E3URYTY8ICV8ON"
 : "${COOKIE_SECRET:?Set COOKIE_SECRET to a persistent secret before deploying}"
 echo "Using the supplied persistent cookie secret."
 
+# Google sign-in is optional. Provide both values to enable the view-only
+# redhat.com Workspace flow; leave both unset to deploy without it.
+if [[ -n "${GOOGLE_CLIENT_ID:-}" || -n "${GOOGLE_CLIENT_SECRET:-}" ]]; then
+    : "${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET together}"
+    : "${GOOGLE_CLIENT_SECRET:?Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET together}"
+fi
+GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
+GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:-}"
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LAMBDA_DIR="$SCRIPT_DIR/lambda-auth"
 WORK_DIR=$(mktemp -d)
@@ -21,13 +30,19 @@ trap "rm -rf $WORK_DIR" EXIT
 echo ""
 echo "=== Step 1: Package Lambda ==="
 cp "$LAMBDA_DIR/index.js" "$LAMBDA_DIR/package.json" "$LAMBDA_DIR/package-lock.json" "$WORK_DIR/"
-sed -i "s|__GITHUB_CLIENT_ID__|$GITHUB_CLIENT_ID|g" "$WORK_DIR/index.js"
-sed -i "s|__GITHUB_CLIENT_SECRET__|$GITHUB_CLIENT_SECRET|g" "$WORK_DIR/index.js"
-sed -i "s|__COOKIE_SECRET__|$COOKIE_SECRET|g" "$WORK_DIR/index.js"
 S3_BUCKET=$(python3 -c "import json; print(json.load(open('_generator/s3_config.json'))['bucket'])")
 S3_REGION=$(python3 -c "import json; print(json.load(open('_generator/s3_config.json'))['region'])")
-sed -i "s|__S3_BUCKET__|$S3_BUCKET|g" "$WORK_DIR/index.js"
-sed -i "s|__S3_REGION__|$S3_REGION|g" "$WORK_DIR/index.js"
+CANONICAL_DOMAIN="${CANONICAL_DOMAIN:-$(python3 -c "import json; print(json.load(open('_generator/s3_config.json'))['cloudfront_domain'])")}"
+(
+    export GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET COOKIE_SECRET S3_BUCKET S3_REGION CANONICAL_DOMAIN
+    export GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
+    python3 "$SCRIPT_DIR/render-auth-config.py" "$WORK_DIR/index.js"
+)
+if [[ -n "$GOOGLE_CLIENT_ID" ]]; then
+    echo "Google view-only sign-in enabled for @redhat.com accounts."
+else
+    echo "Google view-only sign-in disabled; set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable."
+fi
 (cd "$WORK_DIR" && npm ci --omit=dev --ignore-scripts && zip -qr function.zip index.js node_modules)
 echo "Packaged to $WORK_DIR/function.zip"
 
