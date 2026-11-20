@@ -29,8 +29,14 @@ library. Keep `bin/` and `_generator/s3_config.json` in their checkout layout.
 
 ## Configure a local client
 
-For clients supporting the common `mcpServers` configuration format, replace
-both absolute paths below with your checkout location:
+The server uses standard MCP stdio and supports both Claude Code and OpenCode,
+but their configuration formats differ. Replace the absolute paths below with
+your checkout location. Both clients require CLI login on the host running the
+MCP process, as described above.
+
+### Claude Code
+
+Add this to `.mcp.json` in your project root (merge with existing servers):
 
 ```json
 {
@@ -43,9 +49,41 @@ both absolute paths below with your checkout location:
 }
 ```
 
-Use your client's equivalent local command/arguments settings if its schema
-differs. Restart or reconnect the client and confirm `upload_report` appears.
+Approve the project server when Claude Code prompts, then check its connection
+with `/mcp` or `claude mcp get psap-reports`.
+
+### OpenCode V2
+
+Add this to `opencode.json` in your project root (merge with existing settings):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "psap-reports": {
+        "type": "local",
+        "command": [
+          "/absolute/path/reports/.venv-mcp/bin/python",
+          "/absolute/path/reports/bin/psap-report-mcp"
+        ]
+      }
+    }
+  }
+}
+```
+
+OpenCode reloads configuration automatically. Check the connection with `/mcps`
+or `opencode mcp list`. Unlike Claude Code, OpenCode V2 uses `mcp.servers` and
+places the executable and arguments together in the `command` array.
+
+For either client, confirm `upload_report` appears after connecting.
 Stdout is reserved for MCP messages; upload progress is not printed.
+The integration tests exercise a standard MCP stdio client, not either
+application directly.
+
+Configuration references: [Claude Code MCP](https://code.claude.com/docs/en/mcp)
+and [OpenCode V2 MCP](https://opencode.ai/v2/docs/mcp-servers).
 
 ## Files and arguments
 
