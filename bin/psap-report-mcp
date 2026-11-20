@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+"""Optional local stdio MCP server; install requirements-mcp.txt first."""
+from psap_report_mcp import server
+
+if __name__ == "__main__":
+    server.run(transport="stdio")

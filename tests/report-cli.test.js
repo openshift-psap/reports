@@ -24,6 +24,7 @@ function makeBundle(apiUrl) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'psap-cli-'));
   fs.mkdirSync(path.join(root, 'bin'));
   fs.copyFileSync(path.join(repo, 'bin', 'psap-report'), path.join(root, 'bin', 'psap-report'));
+  fs.copyFileSync(path.join(repo, 'bin', 'psap_report.py'), path.join(root, 'bin', 'psap_report.py'));
   fs.chmodSync(path.join(root, 'bin', 'psap-report'), 0o755);
   fs.mkdirSync(path.join(root, '_generator'));
   fs.writeFileSync(path.join(root, '_generator', 's3_config.json'), JSON.stringify({

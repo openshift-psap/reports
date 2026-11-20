@@ -2,3 +2,5 @@
 /public-reports.json
 /private-entries.json
 __pycache__/
+__pycache__/
+.venv-mcp/
