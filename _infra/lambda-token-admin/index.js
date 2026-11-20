@@ -21,6 +21,7 @@ const REPORT_ACCESS = new Set(['public', 'authenticated']);
 const MAX_UPLOAD_FILES = 100;
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const UPLOAD_URL_TTL = 15 * 60;
+const BASE_KEY_PATTERN = /^(public|private)\/(benchmarks|ci|investigations|presentations)\/(\d{4}-\d{2}-\d{2})_([a-z0-9-]+)-([a-f0-9]+)$/;
 
 const s3 = new S3Client({ region: REGION });
 
@@ -205,9 +206,22 @@ function reportEntry(submission) {
     category: submission.category,
     path: submission.externalUrl || `https://${submission.cloudfrontDomain}/${submission.baseKey}/${submission.entryFile}`,
     externalUrl: submission.externalUrl || null,
+    ...(submission.baseKey && !submission.externalUrl ? { baseKey: submission.baseKey } : {}),
     size: submission.size || '—',
     authenticated: submission.access === 'authenticated',
   };
+}
+
+function reportBundlePrefix(entry, access, id) {
+  if (typeof entry.baseKey !== 'string' || entry.baseKey !== entry.baseKey.trim()) return null;
+  const match = entry.baseKey.match(BASE_KEY_PATTERN);
+  if (!match) return null;
+  if (match[1] !== (access === 'public' ? 'public' : 'private')) return null;
+  // Category is editable metadata, while baseKey keeps the creation category.
+  // Validate the supported storage format instead of the current category.
+  if (match[3] !== entry.date) return null;
+  if (match[5] !== id.split('-')[0]) return null;
+  return `${entry.baseKey}/`;
 }
 
 function validateSubmission(body) {
@@ -217,6 +231,8 @@ function validateSubmission(body) {
   const slug = safeSlug(body.slug || title);
   const files = Array.isArray(body.files) ? body.files : [];
   const externalUrl = safeString(body.externalUrl, 2000);
+  const pathMode = body.pathMode === undefined || body.pathMode === null || body.pathMode === '' ? 'strip' : body.pathMode;
+  if (!['strip', 'preserve'].includes(pathMode)) return { error: 'pathMode must be strip or preserve' };
   if (!REPORT_ACCESS.has(access)) return { error: 'access must be public or authenticated' };
   if (!REPORT_CATEGORIES.has(category)) return { error: 'Choose a supported category' };
   if (!title) return { error: 'A report title is required' };
@@ -238,25 +254,44 @@ function validateSubmission(body) {
     normalizedFiles.push({ name, size, contentType: safeString(file.contentType, 120) || 'application/octet-stream' });
   }
   // Browser directory inputs commonly include the selected folder itself in
-  // every relative path (for example, report/index.html). Strip that one
-  // wrapper while retaining any real nested asset directories.
-  const roots = normalizedFiles.map(file => file.name.split('/')[0]);
-  if (roots.length && roots.every(root => root === roots[0]) && normalizedFiles.every(file => file.name.includes('/'))) {
+  // every relative path (for example, report/index.html). Legacy callers strip
+  // that one wrapper while retaining any real nested asset directories. Callers
+  // that already send paths relative to their source root opt into preserve.
+  const originalNames = normalizedFiles.map(file => file.name);
+  const roots = originalNames.map(name => name.split('/')[0]);
+  const stripRoot = pathMode === 'strip' && roots.length &&
+    roots.every(root => root === roots[0]) && originalNames.every(name => name.includes('/'))
+    ? roots[0] : null;
+  if (stripRoot) {
     normalizedFiles.forEach(file => { file.name = file.name.substring(file.name.indexOf('/') + 1); });
   }
+  const normalizedByOriginal = stripRoot
+    ? new Map(originalNames.map((name, index) => [name, normalizedFiles[index].name]))
+    : null;
   const outputNames = new Set(normalizedFiles.map(file => file.name));
   if (outputNames.size !== normalizedFiles.length) return { error: 'Duplicate file names after folder normalization' };
   let entryFile = safeFileName(body.entryFile);
+  const entryProvided = body.entryFile !== undefined && body.entryFile !== null &&
+    !(typeof body.entryFile === 'string' && body.entryFile.trim() === '');
+  if (entryProvided && !entryFile) return { error: 'entryFile must be a valid relative file path' };
   if (!entryFile) {
     const htmlFiles = normalizedFiles.filter(file => /\.html?$/i.test(file.name));
     if (htmlFiles.length !== 1) return { error: 'Specify entryFile when the bundle has zero or multiple HTML files' };
     entryFile = htmlFiles[0].name;
+  } else if (normalizedByOriginal && normalizedByOriginal.has(entryFile)) {
+    // Legacy folder-selection payloads use the original wrapper-prefixed path.
+    // Map it through the same one-time normalization as the files. An explicit
+    // path that is not an original name is treated as already normalized, and
+    // inferred entries are always taken from the normalized names above. If a
+    // path is both an original and a normalized name, the original-name
+    // interpretation wins deterministically.
+    entryFile = normalizedByOriginal.get(entryFile);
   }
   if (!outputNames.has(entryFile)) return { error: 'entryFile must be one of the uploaded files' };
   if (totalBytes > MAX_UPLOAD_BYTES) return { error: 'The report bundle exceeds the 100 MB limit' };
   const tags = Array.isArray(body.tags) ? body.tags.map(tag => safeString(tag, 40)).filter(Boolean).slice(0, 20) : [];
   return {
-    access, category, title, slug, files: normalizedFiles, entryFile, tags,
+    access, category, title, slug, files: normalizedFiles, entryFile, pathMode, tags,
     description: safeString(body.description, 1000),
     status: ['draft', 'final', 'archived'].includes(body.status) ? body.status : 'final',
     size: safeString(body.size, 40),
@@ -355,7 +390,7 @@ exports.handler = async (event) => {
         CacheControl: 'no-cache',
       }), { expiresIn: UPLOAD_URL_TTL }),
     })));
-    return response(201, { id, uploads, expiresAt: pending.expiresAt }, origin);
+    return response(201, { id, uploads, expiresAt: pending.expiresAt, pathMode: submission.pathMode }, origin);
   }
 
   // POST /reports/<id>/complete — only publish metadata after index.html exists.
@@ -394,8 +429,16 @@ exports.handler = async (event) => {
     try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
     if (String(entry.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may delete only your own reports' }, origin);
     if (entry.externalUrl) { await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-meta/${access}/${id}.json` })); return response(200, { deleted: id }, origin); }
-    const prefix = new URL(entry.path).pathname.replace(/^\//, '').replace(/\/[^/]+$/, '/');
-    if (!prefix.startsWith(access === 'public' ? 'public/' : 'private/')) return response(400, { error: 'Invalid report storage path' }, origin);
+    let prefix;
+    if (entry.baseKey !== undefined && entry.baseKey !== null) {
+      prefix = reportBundlePrefix(entry, access, id);
+      if (!prefix) return response(400, { error: 'Invalid report storage path' }, origin);
+    } else {
+      // Older metadata has no recorded bundle key. Keep the prior root-entry
+      // fallback, which deletes the directory containing the entry page.
+      prefix = new URL(entry.path).pathname.replace(/^\//, '').replace(/\/[^/]+$/, '/');
+      if (!prefix.startsWith(access === 'public' ? 'public/' : 'private/')) return response(400, { error: 'Invalid report storage path' }, origin);
+    }
     await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-meta/${access}/${id}.json` }));
     await deleteReportObjects(prefix);
     return response(200, { deleted: id }, origin);
