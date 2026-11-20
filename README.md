@@ -2,18 +2,18 @@
 
 Report hub and report bundles are served from private S3 through CloudFront. Git contains the application and infrastructure code, never report content.
 
-See [Using the PSAP Report Hub](USING_THE_REPORT_HUB.md) for browsing, sign-in, token management, and report publishing instructions.
+See [Using the PSAP Report Hub](USING_THE_REPORT_HUB.md) for browsing, sign-in, token management, and report publishing instructions. For command-line uploads, including authentication, limits, and automation constraints, see the [CLI guide](CLI.md).
 
 ## How it works
 
-1. **Report bundles live only in S3** — submitters upload an `index.html` bundle through the protected hub.
+1. **Report bundles live only in S3** — submitters upload an HTML bundle with a designated entry page through the protected hub or CLI.
 2. **The repository deploys the hub shell** — GitHub Actions uses OIDC to publish the application UI and infrastructure-controlled artifacts.
-3. **Metadata is per-report** — S3 objects under `report-meta/public/` and `report-meta/private/` power the dynamic index without a shared mutable manifest.
+3. **Metadata is per-report** — S3 objects under `report-meta/public/` and `report-meta/authenticated/` power the dynamic index without a shared mutable manifest.
 4. **Auth via CloudFront** — `private/` reports are gated by GitHub OAuth, verified `redhat.com` Google sign-in (view only), or an access token; `public/` reports are deliberately anonymous.
 
 ## Adding a report
 
-Sign in at the CloudFront hub and use **Submit a report**. Select the entire report folder, which must contain a top-level `index.html` plus any relative assets. The browser receives short-lived, prefix-scoped S3 upload URLs; it uploads the files directly to S3 and publishes the metadata only after `index.html` is present.
+Sign in at the CloudFront hub and use **Submit a report** to upload one self-contained HTML file; any HTML filename is accepted. For a report with relative assets or multiple files, use the [CLI uploader](CLI.md), which preserves directory-relative paths, including a nested entry page. The browser or CLI receives short-lived, prefix-scoped S3 upload URLs; files go directly to S3 and metadata is published only after the designated entry file is present.
 
 Do not commit report HTML, assets, or private report metadata to this repository.
 
@@ -55,7 +55,7 @@ The full report index is baked into `index.html` as a JSON array. All filtering,
 
 ### Upload model: authenticated direct-to-S3
 
-Every submission uses a unique object prefix: `public/<category>/...` or `private/<category>/...`. The upload plan is valid for 15 minutes, allows at most 100 files and 100 MB total, and requires a top-level `index.html`. A separate metadata object is written only after the report is complete. The current UI intentionally has no deletion function; removal is an explicit administrative S3 operation.
+Every submission uses a unique object prefix: `public/<category>/...` or `private/<category>/...`. The upload plan is valid for 15 minutes, allows at most 100 files and 100 MB total, and requires a designated HTML entry file that must be one of the uploaded files. The browser accepts one HTML file; the CLI preserves a nested entry and every relative asset path. A separate metadata object is written only after the report is complete. Owners can delete their own reports in the hub; see [Delete a report](USING_THE_REPORT_HUB.md#delete-a-report) for which files are removed. Archiving keeps the files.
 
 ### Report format: HTML only
 
@@ -63,4 +63,4 @@ The generator is format-agnostic — it indexes `meta.json` and links to whateve
 
 ### Visibility model: separate S3 prefixes
 
-Public metadata is read anonymously from `report-meta/public/` through the reports API. Private metadata is read only after authentication from `report-meta/private/`. The edge authorizer permits the hub shell, `/public/`, and the public listing endpoint only; private paths and private titles never reach anonymous clients.
+Public metadata is read anonymously from `report-meta/public/` through the reports API. Private metadata is read only after authentication from `report-meta/authenticated/`. The edge authorizer permits the hub shell, `/public/`, and the public listing endpoint only; private paths and private titles never reach anonymous clients.
