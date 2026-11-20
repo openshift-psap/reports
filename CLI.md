@@ -7,8 +7,8 @@ credentials.
 
 The CLI uploads **new reports only**. Listing, metadata edits, content
 replacement, archiving, deletion, external-link submissions, and access-token
-management remain browser features in the hub. There is currently no MCP
-server; a local MCP wrapper is tracked separately.
+management remain browser features in the hub. An optional [local MCP wrapper](MCP.md)
+exposes the same uploader to agent clients over stdio.
 
 ## Agent upload approval
 
@@ -73,8 +73,8 @@ The checkout already marks `bin/psap-report` executable. If needed, run it as
 directory as long as the checkout is intact.
 
 Do not copy `bin/psap-report` by itself to another location. The script loads
-`_generator/s3_config.json` when it starts, so a standalone copy fails with a
-`FileNotFoundError` even for `--help`. There are no environment overrides for
+`bin/psap_report.py` and `_generator/s3_config.json` when it starts, so a standalone
+copy fails even for `--help`. There are no environment overrides for
 the API URL or GitHub client ID.
 
 ## Options
@@ -346,7 +346,7 @@ any other file.
 | `source, --title, and --category are required for upload` | Supply all three for an upload. `--login` alone is the exception. |
 | `FileNotFoundError` for `_generator/s3_config.json` | The script was copied out of its checkout. Run `bin/psap-report` from an intact clone. |
 | GitHub device-flow error or timeout | Retry `--login`; use the newly printed verification URL and code. |
-| Python traceback during a file upload | A direct S3 upload failed. No report is published until completion succeeds; retry and obtain fresh URLs. |
+| `File upload failed` | A direct S3 upload failed. Check file readability and network access, then retry with a fresh upload plan. |
 
 The CLI does not retry failed requests automatically. Re-running an upload
 creates a new report rather than resuming the old one.
