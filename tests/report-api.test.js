@@ -9,16 +9,16 @@ const crypto = require('node:crypto');
 const source = fs.readFileSync('_infra/lambda-token-admin/index.js', 'utf8');
 const id = '12345678-1234-1234-1234-123456789abc';
 
-function setup(overrides = {}) {
+function setup(overrides = {}, { reportId = id, listings = {} } = {}) {
   const original = {
-    id, reportId: id, title: 'Old title', description: 'Old description', category: 'ci',
+    id: reportId, reportId, title: 'Old title', description: 'Old description', category: 'ci',
     tags: ['gpu'], author: 'Owner', version: 2, isLatest: true, status: 'final',
     date: '2026-10-01', submittedAt: '2026-10-01T12:00:00Z',
     path: 'https://reports.example/private/ci/original/report.html', authenticated: true,
     ...overrides,
   };
   const calls = [];
-  const objects = new Map([[`report-meta/authenticated/${id}.json`, original]]);
+  const objects = new Map([[`report-meta/authenticated/${reportId}.json`, original]]);
   const commands = {};
   for (const name of ['GetObjectCommand', 'PutObjectCommand', 'DeleteObjectCommand', 'HeadObjectCommand', 'ListObjectsV2Command', 'DeleteObjectsCommand']) {
     commands[name] = class { constructor(input) { this.name = name; this.input = input; } };
@@ -32,11 +32,14 @@ function setup(overrides = {}) {
         return { Body: { transformToString: async () => JSON.stringify(objects.get(Key)) } };
       }
       if (command.name === 'PutObjectCommand') objects.set(Key, JSON.parse(Body));
+      if (command.name === 'DeleteObjectCommand') objects.delete(Key);
+      if (command.name === 'DeleteObjectsCommand') (command.input.Delete.Objects || []).forEach(item => objects.delete(item.Key));
+      if (command.name === 'ListObjectsV2Command') return { Contents: (listings[command.input.Prefix] || []).map(key => ({ Key: key })) };
       return {};
     }
   };
   const context = {
-    exports: {}, process: { env: { COOKIE_SECRET: 'test-secret', CLOUDFRONT_DOMAIN: 'reports.example' } }, console,
+    exports: {}, process: { env: { COOKIE_SECRET: 'test-secret', CLOUDFRONT_DOMAIN: 'reports.example' } }, console, URL,
     require(name) {
       if (name === '@aws-sdk/client-s3') return commands;
       if (name === '@aws-sdk/s3-request-presigner') return { getSignedUrl: async () => 'https://upload.example/' };
@@ -44,16 +47,35 @@ function setup(overrides = {}) {
     },
   };
   vm.runInNewContext(source, context);
-  async function request(body, { handle = 'owner', method = 'PATCH', access = 'authenticated', reportId = id } = {}) {
+  async function request(body, { handle = 'owner', method = 'PATCH', access = 'authenticated', reportId: requestedId = reportId } = {}) {
     const value = `authenticated:github:${Date.now()}:${handle}`;
     const signature = crypto.createHmac('sha256', 'test-secret').update(value).digest('base64url');
     const result = await context.exports.handler({
       httpMethod: method, path: '/reports', headers: { cookie: `psap_auth=${value}.${signature}` },
-      queryStringParameters: { access, id: reportId }, body: body === undefined ? undefined : JSON.stringify(body),
+      queryStringParameters: { access, id: requestedId }, body: body === undefined ? undefined : JSON.stringify(body),
     });
     return { ...result, data: result.body ? JSON.parse(result.body) : null };
   }
-  return { request, original, calls, objects };
+  async function upload(body, { handle = 'owner' } = {}) {
+    const value = `authenticated:github:${Date.now()}:${handle}`;
+    const signature = crypto.createHmac('sha256', 'test-secret').update(value).digest('base64url');
+    const result = await context.exports.handler({
+      httpMethod: 'POST', path: '/reports', headers: { cookie: `psap_auth=${value}.${signature}` },
+      body: JSON.stringify(body),
+    });
+    const pendingCall = calls.filter(call => call.name === 'PutObjectCommand' && call.input.Key.startsWith('report-submissions/')).pop();
+    return { ...result, data: result.body ? JSON.parse(result.body) : null, pending: pendingCall ? JSON.parse(pendingCall.input.Body) : null };
+  }
+  async function complete(uploadId, { handle = 'owner' } = {}) {
+    const value = `authenticated:github:${Date.now()}:${handle}`;
+    const signature = crypto.createHmac('sha256', 'test-secret').update(value).digest('base64url');
+    const result = await context.exports.handler({
+      httpMethod: 'POST', path: `/reports/${uploadId}/complete`, headers: { cookie: `psap_auth=${value}.${signature}` },
+      body: '{}',
+    });
+    return { ...result, data: result.body ? JSON.parse(result.body) : null };
+  }
+  return { request, upload, complete, original, calls, objects };
 }
 
 const metadata = { action: 'metadata', title: 'New title', category: 'benchmarks', description: 'Updated', tags: ['rhoai', 'gpu'] };
@@ -129,4 +151,245 @@ test('CORS preflight permits metadata PATCH', async () => {
   const result = await setup().request(undefined, { method: 'OPTIONS' });
   assert.equal(result.statusCode, 204);
   assert.match(result.headers['Access-Control-Allow-Methods'], /PATCH/);
+});
+
+const bundle = { title: 'Nested report', category: 'ci', access: 'authenticated' };
+
+function fileList(...names) {
+  return names.map((name, index) => ({ name, size: 10 + index, contentType: 'application/octet-stream' }));
+}
+
+test('preserve mode keeps a nested entry file and its assets under the source root', async () => {
+  const { upload } = setup();
+  const result = await upload({
+    ...bundle, pathMode: 'preserve', entryFile: 'site/index.html',
+    files: fileList('site/index.html', 'site/assets/app.js', 'site/assets/app.css'),
+  });
+  assert.equal(result.statusCode, 201);
+  assert.equal(result.data.pathMode, 'preserve');
+  assert.deepEqual(result.data.uploads.map(item => item.name), ['site/index.html', 'site/assets/app.js', 'site/assets/app.css']);
+  assert.deepEqual(result.pending.files.map(item => item.name), ['site/index.html', 'site/assets/app.js', 'site/assets/app.css']);
+  assert.equal(result.pending.entryFile, 'site/index.html');
+  assert.equal(result.pending.pathMode, 'preserve');
+});
+
+test('completion checks and links the preserved nested entry path', async () => {
+  const { upload, complete, calls } = setup();
+  const plan = await upload({
+    ...bundle, pathMode: 'preserve', entryFile: 'site/index.html',
+    files: fileList('site/index.html', 'site/assets/app.js'),
+  });
+  assert.equal(plan.statusCode, 201);
+  const result = await complete(plan.data.id);
+  assert.equal(result.statusCode, 201);
+  assert.equal(result.data.report.path, `https://reports.example/${plan.pending.baseKey}/site/index.html`);
+  const head = calls.find(call => call.name === 'HeadObjectCommand');
+  assert.equal(head.input.Key, `${plan.pending.baseKey}/site/index.html`);
+});
+
+test('preserve mode accepts a root entry file with nested assets', async () => {
+  const { upload } = setup();
+  const result = await upload({
+    ...bundle, pathMode: 'preserve', entryFile: 'index.html',
+    files: fileList('index.html', 'assets/app.js'),
+  });
+  assert.equal(result.statusCode, 201);
+  assert.equal(result.pending.entryFile, 'index.html');
+  assert.deepEqual(result.pending.files.map(item => item.name), ['index.html', 'assets/app.js']);
+});
+
+test('preserve mode honors an explicit entry when a bundle has multiple HTML files', async () => {
+  const { upload } = setup();
+  const result = await upload({
+    ...bundle, pathMode: 'preserve', entryFile: 'report/deck/report.html',
+    files: fileList('report/index.html', 'report/deck/report.html', 'report/assets/chart.png'),
+  });
+  assert.equal(result.statusCode, 201);
+  assert.equal(result.pending.entryFile, 'report/deck/report.html');
+  assert.deepEqual(result.data.uploads.map(item => item.name), ['report/index.html', 'report/deck/report.html', 'report/assets/chart.png']);
+});
+
+test('preserve mode infers the single nested HTML entry when entryFile is omitted', async () => {
+  const { upload } = setup();
+  const result = await upload({
+    ...bundle, pathMode: 'preserve', files: fileList('site/index.html', 'site/assets/app.js'),
+  });
+  assert.equal(result.statusCode, 201);
+  assert.equal(result.pending.entryFile, 'site/index.html');
+});
+
+test('legacy requests keep folder stripping and normalize an explicit entry consistently', async () => {
+  const { upload } = setup();
+  const result = await upload({
+    ...bundle, entryFile: 'report/index.html',
+    files: fileList('report/index.html', 'report/assets/app.css'),
+  });
+  assert.equal(result.statusCode, 201);
+  assert.equal(result.data.pathMode, 'strip');
+  assert.deepEqual(result.pending.files.map(item => item.name), ['index.html', 'assets/app.css']);
+  assert.equal(result.pending.entryFile, 'index.html');
+  assert.deepEqual(result.data.uploads.map(item => item.name), ['index.html', 'assets/app.css']);
+});
+
+test('legacy inferred entries are not stripped a second time', async () => {
+  const { upload } = setup();
+  const result = await upload({
+    ...bundle, files: fileList('root/root/report.html', 'root/root/assets/app.css'),
+  });
+  assert.equal(result.statusCode, 201);
+  assert.deepEqual(result.pending.files.map(item => item.name), ['root/report.html', 'root/assets/app.css']);
+  assert.equal(result.pending.entryFile, 'root/report.html');
+});
+
+test('legacy explicit original and already-normalized double-root entries map deterministically', async () => {
+  for (const entryFile of ['root/root/report.html', 'root/report.html']) {
+    const { upload } = setup();
+    const result = await upload({
+      ...bundle, entryFile, files: fileList('root/root/report.html', 'root/root/assets/app.css'),
+    });
+    assert.equal(result.statusCode, 201, entryFile);
+    assert.equal(result.pending.entryFile, 'root/report.html', entryFile);
+  }
+});
+
+test('legacy ambiguity resolves from the original-name mapping deterministically', async () => {
+  const files = fileList('root/report.html', 'root/root/report.html');
+  const original = await setup().upload({ ...bundle, entryFile: 'root/report.html', files });
+  assert.equal(original.statusCode, 201);
+  assert.equal(original.pending.entryFile, 'report.html');
+  const nested = await setup().upload({ ...bundle, entryFile: 'root/root/report.html', files });
+  assert.equal(nested.statusCode, 201);
+  assert.equal(nested.pending.entryFile, 'root/report.html');
+});
+
+test('legacy requests retain the already-stripped explicit entry form', async () => {
+  const { upload } = setup();
+  const result = await upload({
+    ...bundle, entryFile: 'assets/report.html',
+    files: fileList('report/assets/report.html', 'report/styles/app.css'),
+  });
+  assert.equal(result.statusCode, 201);
+  assert.deepEqual(result.pending.files.map(item => item.name), ['assets/report.html', 'styles/app.css']);
+  assert.equal(result.pending.entryFile, 'assets/report.html');
+});
+
+test('an unsupported path mode is rejected instead of silently changing behavior', async () => {
+  const { upload } = setup();
+  const result = await upload({
+    ...bundle, pathMode: 'absolute', entryFile: 'index.html', files: fileList('index.html'),
+  });
+  assert.equal(result.statusCode, 400);
+  assert.match(result.data.error, /pathMode/);
+});
+
+test('invalid explicit entry and traversal paths are rejected', async () => {
+  const { upload } = setup();
+  for (const entryFile of ['../index.html', 'site/../index.html', '/index.html', 'site\\index.html']) {
+    const result = await upload({
+      ...bundle, pathMode: 'preserve', entryFile, files: fileList('index.html'),
+    });
+    assert.equal(result.statusCode, 400, entryFile);
+    assert.equal(result.pending, null);
+  }
+  const traversalFile = await upload({
+    ...bundle, pathMode: 'preserve', entryFile: 'index.html', files: fileList('../index.html'),
+  });
+  assert.equal(traversalFile.statusCode, 400);
+  assert.equal(traversalFile.pending, null);
+});
+
+const bundleKey = 'private/ci/2026-10-01_old-title-12345678';
+
+test('completion records the bundle base key for lifecycle deletion', async () => {
+  const { upload, complete } = setup();
+  const plan = await upload({
+    ...bundle, pathMode: 'preserve', entryFile: 'pages/report.html',
+    files: fileList('pages/report.html', 'assets/app.js'),
+  });
+  const result = await complete(plan.data.id);
+  assert.equal(result.statusCode, 201);
+  assert.equal(result.data.report.baseKey, plan.pending.baseKey);
+});
+
+test('legacy root-entry delete keeps its established full-prefix behavior', async () => {
+  const { request, calls } = setup({
+    path: `https://reports.example/${bundleKey}/report.html`,
+  }, { listings: { [`${bundleKey}/`]: [`${bundleKey}/report.html`, `${bundleKey}/assets/app.js`] } });
+  const result = await request(undefined, { method: 'DELETE' });
+  assert.equal(result.statusCode, 200);
+  const list = calls.find(call => call.name === 'ListObjectsV2Command');
+  assert.equal(list.input.Prefix, `${bundleKey}/`);
+  const deleted = calls.find(call => call.name === 'DeleteObjectsCommand').input.Delete.Objects.map(item => item.Key).sort();
+  assert.deepEqual(deleted, [`${bundleKey}/assets/app.js`, `${bundleKey}/report.html`]);
+});
+
+test('nested new bundle delete removes sibling assets from the recorded prefix', async () => {
+  const { request, calls, objects } = setup({
+    baseKey: bundleKey, path: `https://reports.example/${bundleKey}/pages/report.html`,
+  }, { listings: { [`${bundleKey}/`]: [`${bundleKey}/pages/report.html`, `${bundleKey}/assets/app.js`, `${bundleKey}/assets/style.css`] } });
+  const result = await request(undefined, { method: 'DELETE' });
+  assert.equal(result.statusCode, 200);
+  assert.equal(calls.find(call => call.name === 'ListObjectsV2Command').input.Prefix, `${bundleKey}/`);
+  assert.deepEqual(calls.find(call => call.name === 'DeleteObjectsCommand').input.Delete.Objects.map(item => item.Key).sort(), [
+    `${bundleKey}/assets/app.js`, `${bundleKey}/assets/style.css`, `${bundleKey}/pages/report.html`,
+  ]);
+  assert.equal(objects.has(`report-meta/authenticated/${id}.json`), false);
+});
+
+test('editing metadata category does not invalidate the recorded bundle prefix', async () => {
+  const { request, calls } = setup({
+    baseKey: bundleKey, category: 'benchmarks', path: `https://reports.example/${bundleKey}/pages/report.html`,
+  }, { listings: { [`${bundleKey}/`]: [`${bundleKey}/pages/report.html`] } });
+  const result = await request(undefined, { method: 'DELETE' });
+  assert.equal(result.statusCode, 200);
+  assert.equal(calls.find(call => call.name === 'ListObjectsV2Command').input.Prefix, `${bundleKey}/`);
+});
+
+test('delete still requires ownership before prefix handling', async () => {
+  const { request, calls, objects } = setup({ baseKey: bundleKey });
+  const result = await request(undefined, { method: 'DELETE', handle: 'someone-else' });
+  assert.equal(result.statusCode, 403);
+  assert.equal(calls.some(call => ['ListObjectsV2Command', 'DeleteObjectsCommand', 'DeleteObjectCommand'].includes(call.name)), false);
+  assert.equal(objects.has(`report-meta/authenticated/${id}.json`), true);
+});
+
+test('deleting one revision cannot remove another revision bundle', async () => {
+  const firstId = '11111111-1111-1111-1111-111111111111';
+  const secondId = '22222222-2222-2222-2222-222222222222';
+  const firstKey = 'private/ci/2026-10-01_old-title-11111111';
+  const secondKey = 'private/ci/2026-10-01_old-title-22222222';
+  const { request, calls, objects } = setup({ baseKey: firstKey }, {
+    reportId: firstId,
+    listings: {
+      [`${firstKey}/`]: [`${firstKey}/index.html`, `${firstKey}/assets/app.js`],
+      [`${secondKey}/`]: [`${secondKey}/index.html`],
+    },
+  });
+  objects.set(`report-meta/authenticated/${secondId}.json`, {
+    id: secondId, reportId: firstId, title: 'Old title', category: 'ci', author: 'Owner',
+    date: '2026-10-01', baseKey: secondKey, path: `https://reports.example/${secondKey}/index.html`,
+  });
+  const result = await request(undefined, { method: 'DELETE', reportId: firstId });
+  assert.equal(result.statusCode, 200);
+  const prefixes = calls.filter(call => call.name === 'ListObjectsV2Command').map(call => call.input.Prefix);
+  assert.deepEqual(prefixes, [`${firstKey}/`]);
+  assert.equal(calls.some(call => call.name === 'DeleteObjectCommand' && call.input.Key.includes(secondId)), false);
+  assert.equal(objects.has(`report-meta/authenticated/${firstId}.json`), false);
+  assert.equal(objects.has(`report-meta/authenticated/${secondId}.json`), true);
+});
+
+test('malformed recorded bundle prefixes are rejected without listing or deleting objects', async () => {
+  for (const malformed of [
+    'private', 'private/ci', 'private/ci/../other', 'private//ci/2026-10-01_old-title-12345678',
+    'public/ci/2026-10-01_old-title-12345678', 'private/unknown/2026-10-01_old-title-12345678',
+    'private/ci/2026-10-02_old-title-12345678', 'private/ci/2026-10-01_old-title-99999999',
+    ` ${bundleKey}`, `${bundleKey}/extra`,
+  ]) {
+    const { request, calls, objects } = setup({ baseKey: malformed });
+    const result = await request(undefined, { method: 'DELETE' });
+    assert.equal(result.statusCode, 400, malformed);
+    assert.match(result.data.error, /Invalid report storage path/);
+    assert.equal(calls.some(call => ['ListObjectsV2Command', 'DeleteObjectsCommand'].includes(call.name)), false);
+    assert.equal(objects.has(`report-meta/authenticated/${id}.json`), true);
+  }
 });

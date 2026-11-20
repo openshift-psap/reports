@@ -68,8 +68,11 @@ def main():
         relative = {path.relative_to(root).as_posix(): path for path in files}
     else: raise SystemExit(f"Source not found: {source}")
     if entry not in relative: raise SystemExit(f"Entry file not found: {entry}")
-    payload = {"title": args.title, "category": args.category, "access": "authenticated" if args.access == "internal" else "public", "tags": [tag.strip() for tag in args.tags.split(",") if tag.strip()], "description": args.description, "entryFile": entry, "files": [{"name": name, "size": path.stat().st_size, "contentType": mimetypes.guess_type(name)[0] or "application/octet-stream"} for name, path in relative.items()]}
+    payload = {"title": args.title, "category": args.category, "access": "authenticated" if args.access == "internal" else "public", "tags": [tag.strip() for tag in args.tags.split(",") if tag.strip()], "description": args.description, "entryFile": entry, "pathMode": "preserve", "files": [{"name": name, "size": path.stat().st_size, "contentType": mimetypes.guess_type(name)[0] or "application/octet-stream"} for name, path in relative.items()]}
     plan = request(f"{API}/reports", "POST", payload, token)
+    if plan.get("pathMode") != "preserve": raise SystemExit("The report API did not confirm pathMode=preserve; update the report service before uploading")
+    planned = [target["name"] for target in plan["uploads"]]
+    if len(planned) != len(relative) or set(planned) != set(relative): raise SystemExit("Upload plan does not match the source files")
     for target in plan["uploads"]:
         path = relative[target["name"]]
         content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
