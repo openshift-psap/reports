@@ -76,7 +76,7 @@ Workstream owners curate the optional prominent tag shortcuts in [`_generator/wo
 
 ## Delete a report
 
-After signing in with GitHub, a **Delete** button appears only on reports attributed to your verified GitHub handle. Confirming deletion permanently removes the report metadata and its S3 bundle. This cannot be undone through the hub.
+After signing in with GitHub, a **Delete** button appears only on reports attributed to your verified GitHub handle. Confirming deletion permanently removes that revision's metadata and every uploaded object under its bundle prefix, including a nested entry page and its sibling assets. This cannot be undone through the hub.
 
 Use **Archive** instead to retire an old or deprecated report without deleting its files. Archived reports remain available through their links and can be found with the status filter, but are clearly marked as archived.
 

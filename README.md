@@ -8,7 +8,7 @@ See [Using the PSAP Report Hub](USING_THE_REPORT_HUB.md) for browsing, sign-in, 
 
 1. **Report bundles live only in S3** — submitters upload an HTML bundle with a designated entry page through the protected hub or CLI.
 2. **The repository deploys the hub shell** — GitHub Actions uses OIDC to publish the application UI and infrastructure-controlled artifacts.
-3. **Metadata is per-report** — S3 objects under `report-meta/public/` and `report-meta/private/` power the dynamic index without a shared mutable manifest.
+3. **Metadata is per-report** — S3 objects under `report-meta/public/` and `report-meta/authenticated/` power the dynamic index without a shared mutable manifest.
 4. **Auth via CloudFront** — `private/` reports are gated by GitHub OAuth, verified `redhat.com` Google sign-in (view only), or an access token; `public/` reports are deliberately anonymous.
 
 ## Adding a report
@@ -55,7 +55,7 @@ The full report index is baked into `index.html` as a JSON array. All filtering,
 
 ### Upload model: authenticated direct-to-S3
 
-Every submission uses a unique object prefix: `public/<category>/...` or `private/<category>/...`. The upload plan is valid for 15 minutes, allows at most 100 files and 100 MB total, and requires a designated HTML entry file that must be one of the uploaded files. The browser accepts one HTML file; the CLI preserves a nested entry and every relative asset path. A separate metadata object is written only after the report is complete. The current UI intentionally has no deletion function; removal is an explicit administrative S3 operation.
+Every submission uses a unique object prefix: `public/<category>/...` or `private/<category>/...`. The upload plan is valid for 15 minutes, allows at most 100 files and 100 MB total, and requires a designated HTML entry file that must be one of the uploaded files. The browser accepts one HTML file; the CLI preserves a nested entry and every relative asset path. A separate metadata object is written only after the report is complete. Owners can delete their own reports in the hub, which permanently removes that revision's metadata and every uploaded object under its bundle prefix; archiving keeps the files.
 
 ### Report format: HTML only
 
@@ -63,4 +63,4 @@ The generator is format-agnostic — it indexes `meta.json` and links to whateve
 
 ### Visibility model: separate S3 prefixes
 
-Public metadata is read anonymously from `report-meta/public/` through the reports API. Private metadata is read only after authentication from `report-meta/private/`. The edge authorizer permits the hub shell, `/public/`, and the public listing endpoint only; private paths and private titles never reach anonymous clients.
+Public metadata is read anonymously from `report-meta/public/` through the reports API. Private metadata is read only after authentication from `report-meta/authenticated/`. The edge authorizer permits the hub shell, `/public/`, and the public listing endpoint only; private paths and private titles never reach anonymous clients.
