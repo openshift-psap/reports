@@ -90,7 +90,7 @@ When a report has more than one revision, its card shows **Versions**. The dialo
 
 ### Non-HTML reports
 
-Every submission needs an HTML entry page. Its name does not need to be `index.html`—select the file in the browser, or pass its relative name with `--entry-file` to the CLI.
+Every submission needs an HTML entry page. Its name does not need to be `index.html`—select the file in the browser, or pass its directory-relative path with `--entry-file` to the CLI. The CLI accepts a nested entry such as `site/report.html` and keeps the bundle paths unchanged.
 
 - **Quarto, Jupyter, Allure, and slide decks:** render or export them to static HTML and upload the resulting folder.
 - **PDFs:** include a small `index.html` landing page that describes the report and embeds or links to `report.pdf`.

@@ -55,6 +55,19 @@ python3 --version
 ./bin/psap-report --help
 ```
 
+Nested entry paths require the current CLI and upload service from `main`. In an
+existing checkout, update to the current `main` before uploading:
+
+```bash
+git switch main
+git pull --ff-only
+```
+
+If the checkout cannot fast-forward, or if it predates nested path support, make
+a fresh clone with the commands above instead of uploading from the old
+checkout. The CLI stops before uploading if the service does not confirm path
+preservation.
+
 The checkout already marks `bin/psap-report` executable. If needed, run it as
 `python3 bin/psap-report` instead. You can invoke it by path from another
 directory as long as the checkout is intact.
@@ -216,7 +229,22 @@ Rules for `--entry-file`:
 - Use a path relative to the directory, with forward slashes.
 - Do not use a leading `./` or an absolute path.
 - The file must exist inside the directory.
+- Nested entries such as `site/report.html` are allowed.
 - For a single-file upload, `--entry-file` must match the HTML filename exactly.
+
+The selected directory is the upload root. Its own name is not part of any
+uploaded or entry path. The CLI preserves every path relative to that root,
+including a nested entry. For example, if `./rendered-report/` contains
+`site/report.html` and `site/assets/style.css`, use
+`--entry-file site/report.html`. The files are uploaded as exactly
+`site/report.html` and
+`site/assets/style.css`, so relative links such as `assets/style.css` continue
+to resolve. Do not flatten `site/` into the upload root and do not prefix the
+entry with `rendered-report/`.
+
+The CLI verifies that the service confirmed path preservation before uploading
+anything; if confirmation is missing, it stops instead of publishing rewritten
+paths (see Troubleshooting).
 
 All uploads default to internal visibility. Add `--access public` only for a
 report intended for anonymous readers.
@@ -252,10 +280,10 @@ Each uploaded file produces a progress line, and the final line is the report
 URL:
 
 ```text
-Uploaded index.html
-Uploaded assets/style.css
-Uploaded assets/chart.png
-https://reports.psap.aws.rhperfscale.org/private/benchmarks/2026-11-19_inference-benchmark-1a2b3c4d/index.html
+Uploaded site/index.html
+Uploaded site/assets/style.css
+Uploaded site/assets/chart.png
+https://reports.psap.aws.rhperfscale.org/private/benchmarks/2026-11-19_inference-benchmark-1a2b3c4d/site/index.html
 ```
 
 The final line is the entry page URL, not an administrative page and not a
@@ -276,7 +304,7 @@ The service enforces these limits:
 | Total bundle size | 100 MB maximum |
 | Individual file size | 100 MB maximum |
 | Upload URL lifetime | 15 minutes from upload-plan creation |
-| Entry page | One designated entry file, which must be one of the uploaded files |
+| Entry page | One designated entry file, which must be one of the uploaded files and may be nested |
 | Tags | 20 kept, 40 characters each |
 | Title | 180 characters |
 | Description | 1000 characters |
@@ -303,6 +331,10 @@ any other file.
 | `API error (400): The report bundle exceeds the 100 MB limit` | Reduce the bundle below 100 MB. |
 | `API error (400): Invalid, duplicate, or oversized file name` | Rename duplicate or invalid paths, and keep each file at or below 100 MB. |
 | `API error (400): entryFile must be one of the uploaded files` | Correct `--entry-file` to an uploaded relative path. |
+| `API error (400): entryFile must be a valid relative file path` | Remove a leading `/` or `./`, backslashes, and any `.` or `..` path segments from `--entry-file`. |
+| `API error (400): pathMode must be strip or preserve` | The service rejected the path-preservation option. Treat this as a client/service version mismatch and do not retry the same upload. |
+| `The report API did not confirm pathMode=preserve; update the report service before uploading` | The service endpoint does not support path preservation. The CLI stopped before uploading any files. Use the current CLI and service from `main`, and report a version mismatch if this persists. |
+| `Upload plan does not match the source files` | The service returned upload targets that do not match the staged bundle. No files were uploaded; report the mismatch rather than retrying blindly. |
 | `API error (400): The selected HTML entry file has not been uploaded yet` | An upload did not land or used a different name. Retry with a fresh plan. |
 | `API error (410): Upload plan expired; start again` | The 15-minute window closed. Re-run the command. |
 | `API error (404): Upload plan not found or already completed` | The plan was already completed or expired. Check the hub before re-uploading. |
