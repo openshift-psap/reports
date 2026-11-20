@@ -55,7 +55,7 @@ The full report index is baked into `index.html` as a JSON array. All filtering,
 
 ### Upload model: authenticated direct-to-S3
 
-Every submission uses a unique object prefix: `public/<category>/...` or `private/<category>/...`. The upload plan is valid for 15 minutes, allows at most 100 files and 100 MB total, and requires a designated HTML entry file that must be one of the uploaded files. The browser accepts one HTML file; the CLI preserves a nested entry and every relative asset path. A separate metadata object is written only after the report is complete. Owners can delete their own reports in the hub, which permanently removes that revision's metadata and every uploaded object under its bundle prefix; archiving keeps the files.
+Every submission uses a unique object prefix: `public/<category>/...` or `private/<category>/...`. The upload plan is valid for 15 minutes, allows at most 100 files and 100 MB total, and requires a designated HTML entry file that must be one of the uploaded files. The browser accepts one HTML file; the CLI preserves a nested entry and every relative asset path. A separate metadata object is written only after the report is complete. Owners can delete their own reports in the hub; see [Delete a report](USING_THE_REPORT_HUB.md#delete-a-report) for which files are removed. Archiving keeps the files.
 
 ### Report format: HTML only
 
