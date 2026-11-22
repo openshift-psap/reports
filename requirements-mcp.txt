@@ -1,0 +1,2 @@
+# Optional; the CLI continues to use only the Python standard library.
+mcp>=1.26,<2

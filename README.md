@@ -4,6 +4,8 @@ Report hub and report bundles are served from private S3 through CloudFront. Git
 
 See [Using the PSAP Report Hub](USING_THE_REPORT_HUB.md) for browsing, sign-in, token management, and report publishing instructions. For command-line uploads, including authentication, limits, and automation constraints, see the [CLI guide](CLI.md).
 
+Agent clients can optionally use the [local stdio MCP uploader](MCP.md), which shares the CLI's upload and authentication implementation.
+
 ## How it works
 
 1. **Report bundles live only in S3** — submitters upload an HTML bundle with a designated entry page through the protected hub or CLI.
