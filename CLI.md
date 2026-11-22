@@ -277,10 +277,11 @@ directory. Both internal and public uploads enforce the same boundary:
   real directories containing the intended assets.
 
 After validation, the uploader opens each resolved path component without
-following symlinks and snapshots the file bytes in memory before requesting a
+following symlinks and snapshots the file bytes in temporary files before requesting a
 plan. A file or parent replaced with a symlink before opening causes rejection;
-changes after snapshotting cannot change the uploaded bytes. Snapshot memory is
-bounded by the existing 100 MiB bundle limit (plus a one-byte overflow check).
+changes after snapshotting cannot change the uploaded bytes. Temporary storage
+must have room for the bundle; snapshots are removed on success or failure.
+The client does not impose a total-size limit; size validation remains with the API.
 
 This is not an atomic snapshot of the filesystem. Concurrent edits to an opened
 regular file can produce inconsistent contents; concurrent additions may be
@@ -346,8 +347,7 @@ The service enforces these limits:
 | Title | 180 characters |
 | Description | 1000 characters |
 
-The CLI checks the 100 MiB total size limit while snapshotting files; the service
-still validates file count and bundle limits. A large or slow upload can
+The CLI does not pre-check file count or total size. A large or slow upload can
 outlive its upload URLs. An upload may then fail, or the completion request may
 fail with an expired-plan error; in either case no report is published. Re-run
 the command to obtain a fresh plan, but check the hub first if the previous run

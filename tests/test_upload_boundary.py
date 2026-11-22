@@ -112,22 +112,22 @@ class BoundaryTests(unittest.TestCase):
 
     def test_file_replaced_after_resolution_cannot_escape(self):
         original = uploader.snapshot_files
-        def replace(root, files):
+        def replace(root, files, directory):
             entry = root / "site/index.html"
             entry.unlink()
             entry.symlink_to(self.outside / "secret.html")
-            return original(root, files)
+            return original(root, files, directory)
         with patch.object(uploader, "snapshot_files", side_effect=replace):
-            self.assert_rejected("Cannot safely open 'site/index.html'")
+            self.assert_rejected("Cannot safely open or snapshot 'site/index.html'")
 
     def test_parent_replaced_after_resolution_cannot_escape(self):
         original = uploader.snapshot_files
-        def replace(root, files):
+        def replace(root, files, directory):
             (root / "site").rename(root / "old-site")
             (root / "site").symlink_to(self.outside, target_is_directory=True)
-            return original(root, files)
+            return original(root, files, directory)
         with patch.object(uploader, "snapshot_files", side_effect=replace):
-            self.assert_rejected("Cannot safely open 'site/index.html'")
+            self.assert_rejected("Cannot safely open or snapshot 'site/index.html'")
 
     def test_replacement_after_plan_uploads_only_snapshot(self):
         def replace():
@@ -139,10 +139,26 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(self.put.call_args.args[0].data, b"entry")
         self.assertEqual(self.plan["files"][0]["size"], len(b"entry"))
 
-    def test_snapshot_size_limit_rejects_before_plan(self):
-        (self.root / "extra.txt").write_bytes(b"12345")
-        with patch.object(uploader, "MAX_UPLOAD_BYTES", 9):
-            self.assert_rejected("bundle exceeds")
+    def test_large_bundle_reaches_api_size_validation_and_snapshots_are_cleaned(self):
+        size = 100 * 1024 * 1024 + 1
+        with (self.root / "large.bin").open("wb") as handle:
+            handle.truncate(size)
+        snapshots = {}
+        original = uploader.snapshot_files
+        def capture(root, files, directory):
+            snapshots.update(original(root, files, directory))
+            return snapshots
+        def reject(url, method, data, token):
+            self.assertGreater(sum(file["size"] for file in data["files"]), size)
+            raise uploader.ReportError("API rejected bundle size")
+        self.api.side_effect = reject
+        with patch.object(uploader, "snapshot_files", side_effect=capture):
+            with self.assertRaisesRegex(uploader.ReportError, "API rejected bundle size"):
+                self.upload()
+        self.api.assert_called_once()
+        self.put.assert_not_called()
+        self.assertTrue(snapshots)
+        self.assertTrue(all(not path.exists() for path in snapshots.values()))
 
 
 if __name__ == "__main__":

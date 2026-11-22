@@ -113,7 +113,7 @@ selects its final target, including that target's filename.
 Files are snapshotted before the upload plan using POSIX no-follow opens;
 Linux or macOS is required. See the CLI's [symlink boundary and filesystem
 limitations](CLI.md#symlink-boundary-and-filesystem-changes), including the
-remaining concurrent-edit limitations and 100 MiB snapshot limit.
+remaining concurrent-edit limitations and temporary-storage requirements.
 Paths and relative asset references are preserved. Entry paths must match an
 included file; do not prefix them with `/`, `./`, or the source directory name.
 The existing API enforces metadata and bundle limits described in [CLI.md](CLI.md).

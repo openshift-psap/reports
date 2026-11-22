@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Upload PSAP report bundles using GitHub OAuth Device Flow."""
-import argparse, json, mimetypes, os, stat, time
+import argparse, json, mimetypes, os, shutil, stat, tempfile, time
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
@@ -11,7 +11,6 @@ CONFIG = json.loads((ROOT / "_generator" / "s3_config.json").read_text())
 API = CONFIG["cli_report_api_url"]
 CLIENT_ID = CONFIG["github_client_id"]
 TOKEN_FILE = Path.home() / ".config" / "psap-report" / "github-oauth.json"
-MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 
 def device_login():
     body = urlencode({"client_id": CLIENT_ID, "scope": "read:org"}).encode()
@@ -105,7 +104,7 @@ def directory_files(root):
                 relative[name] = target
     return relative
 
-def snapshot_files(root, relative):
+def snapshot_files(root, relative, directory):
     """Pin each path component with openat/O_NOFOLLOW, then retain its bytes.
 
     Resolved paths alone are not safe to reopen: a file or parent directory can
@@ -117,7 +116,6 @@ def snapshot_files(root, relative):
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     fd = os.open(root.anchor, directory_flags)
     snapshots = {}
-    remaining = MAX_UPLOAD_BYTES
     name = "upload root"
     try:
         for part in root.parts[1:]:
@@ -136,15 +134,14 @@ def snapshot_files(root, relative):
                 with os.fdopen(file_fd, "rb") as handle:
                     if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
                         raise ReportError(f"Upload path {name!r} is no longer a regular file. Restage the bundle and retry.")
-                    content = handle.read(remaining + 1)
-                if len(content) > remaining:
-                    raise ReportError("The report bundle exceeds the 100 MiB limit. Reduce the staged bundle before uploading.")
-                snapshots[name] = content
-                remaining -= len(content)
+                    snapshot = Path(directory) / str(len(snapshots))
+                    with snapshot.open("wb") as output:
+                        shutil.copyfileobj(handle, output)
+                snapshots[name] = snapshot
             finally:
                 os.close(parent_fd)
     except OSError:
-        raise ReportError(f"Cannot safely open {name!r}: a path changed or is inaccessible. Restage the bundle without changing it during upload, check permissions, and retry.") from None
+        raise ReportError(f"Cannot safely open or snapshot {name!r}: a path changed, is inaccessible, or temporary storage is unavailable. Restage the bundle without changing it during upload, check permissions and temporary disk space, and retry.") from None
     finally:
         os.close(fd)
     return snapshots
@@ -167,16 +164,20 @@ def upload(source, *, title, category, entry_file=None, access="internal", tags=
         relative = directory_files(root)
     else: raise ReportError(f"Source not found: {source}", "Source not found; supply a file or directory on the MCP server host.")
     if entry not in relative: raise ReportError(f"Entry file not found: {entry}", "Entry file not found; use an exact directory-relative path without ./ or ../.")
-    snapshots = snapshot_files(root, relative)
-    payload = {"title": title, "category": category, "access": "authenticated" if access == "internal" else "public", "tags": [tag.strip() for tag in tags.split(",") if tag.strip()], "description": description, "entryFile": entry, "pathMode": "preserve", "files": [{"name": name, "size": len(content), "contentType": mimetypes.guess_type(name)[0] or "application/octet-stream"} for name, content in snapshots.items()]}
+    with tempfile.TemporaryDirectory(prefix="psap-report-") as directory:
+        snapshots = snapshot_files(root, relative, directory)
+        payload = {"title": title, "category": category, "access": "authenticated" if access == "internal" else "public", "tags": [tag.strip() for tag in tags.split(",") if tag.strip()], "description": description, "entryFile": entry, "pathMode": "preserve", "files": [{"name": name, "size": path.stat().st_size, "contentType": mimetypes.guess_type(name)[0] or "application/octet-stream"} for name, path in snapshots.items()]}
+        return publish_snapshot(snapshots, payload, token, progress)
+
+def publish_snapshot(snapshots, payload, token, progress):
     plan = request(f"{API}/reports", "POST", payload, token)
     if plan.get("pathMode") != "preserve": raise ReportError("The report API did not confirm pathMode=preserve; update the report service before uploading")
     planned = [target["name"] for target in plan["uploads"]]
-    if len(planned) != len(relative) or set(planned) != set(relative): raise ReportError("Upload plan does not match the source files")
+    if len(planned) != len(snapshots) or set(planned) != set(snapshots): raise ReportError("Upload plan does not match the source files")
     for target in plan["uploads"]:
         content_type = mimetypes.guess_type(target["name"])[0] or "application/octet-stream"
         try:
-            urlopen(Request(target["url"], data=snapshots[target["name"]], method="PUT", headers={"Content-Type": content_type, "Cache-Control": "no-cache"}), timeout=300).read()
+            urlopen(Request(target["url"], data=snapshots[target["name"]].read_bytes(), method="PUT", headers={"Content-Type": content_type, "Cache-Control": "no-cache"}), timeout=300).read()
         except Exception:
             raise ReportError("File upload failed. Check local file readability and network access; retry with a fresh upload plan.") from None
         if progress: progress(f"Uploaded {target['name']}")
