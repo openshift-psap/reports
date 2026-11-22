@@ -31,8 +31,9 @@ decision to publish remains with the user.
   upload API verifies organization membership with the GitHub token created by
   the CLI. The hub's separate username allowlist applies to browser sign-in, not
   to CLI uploads.
-- Python 3 with its standard library. No packages, virtual environment, or AWS
-  CLI are required.
+- Python 3.10 or newer on Linux or macOS, with its standard library. Safe file
+  opening requires POSIX `dir_fd` and `O_NOFOLLOW` support. No packages, virtual
+  environment, or AWS CLI are required.
 - Network access to GitHub and the report API.
 - A report entry page in HTML (`.html` or `.htm`) and any relative assets beside
   it.
@@ -184,6 +185,12 @@ organization membership through **#forum-psap** for CLI use.
 A single-file upload must be `.html` or `.htm`. Its filename becomes the entry
 page. Do not pass `--entry-file` unless it exactly matches that filename.
 
+An explicitly selected single-file symlink is allowed: its final resolved target
+is the selected file, and that target's filename and HTML extension are used.
+There is no selected directory boundary in this mode. Dangling links and loops
+are rejected. To enforce a report-directory boundary, select the directory
+instead and specify its entry page.
+
 ```bash
 ./bin/psap-report ./standalone-report.html \
   --title "Standalone investigation" \
@@ -253,6 +260,36 @@ The CLI sends the file list first, then uploads each file to a short-lived S3
 URL, and finally asks the service to publish the report. The service checks
 that the entry HTML exists before publishing metadata.
 
+### Symlink boundary and filesystem changes
+
+For a directory upload, the canonical (fully resolved) selected directory is the
+upload root. Selecting a directory through a symlink selects that canonical
+directory. Both internal and public uploads enforce the same boundary:
+
+- File symlinks and chains are allowed only when their final target is inside
+  the upload root. They retain the link's directory-relative upload name.
+- An out-of-root target rejects the entire bundle before any upload-plan or PUT
+  request. The error names the offending relative path without showing target
+  contents. Sibling directories such as `report-private` are outside `report`.
+- Dangling links and symlink loops reject the entire bundle. Repair or remove
+  the named link before retrying; links are never silently omitted.
+- Directory symlinks are rejected, including in-root ones. Replace them with
+  real directories containing the intended assets.
+
+After validation, the uploader opens each resolved path component without
+following symlinks and snapshots the file bytes in memory before requesting a
+plan. A file or parent replaced with a symlink before opening causes rejection;
+changes after snapshotting cannot change the uploaded bytes. Snapshot memory is
+bounded by the existing 100 MiB bundle limit (plus a one-byte overflow check).
+
+This is not an atomic snapshot of the filesystem. Concurrent edits to an opened
+regular file can produce inconsistent contents; concurrent additions may be
+missed, and renaming real directories or changing mount points during traversal
+is not fully prevented. Hard links are treated as regular files, not evidence
+of content provenance. Stage a stable bundle and do not modify it during upload.
+The boundary check complements explicit upload approval; users remain
+responsible for the selected content and audience.
+
 ## Categories, tags, and workstreams
 
 Categories are fixed:
@@ -309,7 +346,8 @@ The service enforces these limits:
 | Title | 180 characters |
 | Description | 1000 characters |
 
-The CLI does not pre-check file count or total size. A large or slow upload can
+The CLI checks the 100 MiB total size limit while snapshotting files; the service
+still validates file count and bundle limits. A large or slow upload can
 outlive its upload URLs. An upload may then fail, or the completion request may
 fail with an expired-plan error; in either case no report is published. Re-run
 the command to obtain a fresh plan, but check the hub first if the previous run

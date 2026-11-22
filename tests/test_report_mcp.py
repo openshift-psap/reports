@@ -148,6 +148,19 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("entry", result.content[0].text.lower())
             self.assertIsNone(self.plan)
 
+    async def test_outside_symlink_rejects_entire_bundle_before_plan(self):
+        outside = self.root / "private.html"
+        outside.write_text("private file contents")
+        (self.source / "site/leak.html").symlink_to(outside)
+        result = await self.call()
+        self.assertTrue(result.isError)
+        self.assertIn("site/leak.html", result.content[0].text)
+        self.assertIn("outside the upload root", result.content[0].text)
+        self.assertNotIn("private file contents", result.content[0].text)
+        self.assertIsNone(self.plan)
+        self.assertEqual(self.uploads, {})
+        self.assertEqual(self.completes, 0)
+
     async def test_rejections_and_failure_redaction(self):
         for stage, status, message in (("plan", 401, "--login"), ("plan", 403, "membership"),
                 ("plan", 400, "metadata"), ("upload", 403, "File upload failed"),
