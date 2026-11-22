@@ -103,8 +103,17 @@ expressions in arguments are not expanded.
 | `tags` | Comma-separated string, default empty |
 | `description` | String, default empty |
 
-Directory uploads include every regular file recursively, including dotfiles
-and file symlink targets, just as the CLI does. Stage only the intended bundle.
+Directory uploads include every regular file recursively, including dotfiles.
+The shared uploader allows file symlinks only when their final targets stay
+inside the canonical report directory. Out-of-root targets, dangling links,
+loops, and all directory symlinks reject the entire bundle before any upload
+plan or PUT request, with the offending relative path in the error. Stage only
+the intended bundle. An explicitly selected standalone-file symlink instead
+selects its final target, including that target's filename.
+Files are snapshotted before the upload plan using POSIX no-follow opens;
+Linux or macOS is required. See the CLI's [symlink boundary and filesystem
+limitations](CLI.md#symlink-boundary-and-filesystem-changes), including the
+remaining concurrent-edit limitations and temporary-storage requirements.
 Paths and relative asset references are preserved. Entry paths must match an
 included file; do not prefix them with `/`, `./`, or the source directory name.
 The existing API enforces metadata and bundle limits described in [CLI.md](CLI.md).

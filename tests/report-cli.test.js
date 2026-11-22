@@ -114,6 +114,25 @@ async function withMock(options, fn) {
 
 const skip = hasPython ? false : 'python3 is required for CLI integration tests';
 
+test('CLI rejects an escaping symlink before any plan or upload', { skip }, async () => {
+  await withMock({}, async ({ url, state }) => {
+    const bundle = makeBundle(url);
+    const source = path.join(bundle.root, 'source');
+    writeFile(source, 'site/index.html', 'entry');
+    writeFile(bundle.root, 'source-private/secret.html', 'do-not-publish');
+    fs.symlinkSync('../../source-private/secret.html', path.join(source, 'site/leak.html'));
+    const result = await runCli(bundle.cli, bundle.home, [
+      source, '--entry-file', 'site/index.html', '--title', 'Report', '--category', 'ci',
+    ]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /site\/leak.html.*outside the upload root/);
+    assert.doesNotMatch(result.stderr, /do-not-publish/);
+    assert.equal(state.plan, null);
+    assert.deepEqual(state.uploads, []);
+    assert.equal(state.completes, 0);
+  });
+});
+
 test('CLI preserves a nested source entry and uploads each original file to its signed target', { skip }, async () => {
   await withMock({}, async ({ url, state }) => {
     const bundle = makeBundle(url);

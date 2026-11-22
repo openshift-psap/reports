@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Upload PSAP report bundles using GitHub OAuth Device Flow."""
-import argparse, json, mimetypes, time
+import argparse, json, mimetypes, os, shutil, stat, tempfile, time
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
@@ -80,35 +80,104 @@ def cli_upload(args):
     result = upload(args.source, title=args.title, category=args.category, entry_file=args.entry_file, access=args.access, tags=args.tags, description=args.description, token=token, progress=print)
     print(result["path"])
 
+def resolve_upload_path(path, name):
+    try:
+        return path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise ReportError(f"Cannot resolve {name!r}: dangling link, symlink loop, or inaccessible path. Remove the link or repair its target before uploading.") from None
+
+def directory_files(root):
+    """Validate every link, including links is_file() would silently omit."""
+    relative = {}
+    def walk_error(error):
+        raise ReportError("Cannot enumerate the report directory. Check permissions and keep the staged bundle unchanged.") from None
+    for parent, directories, files in os.walk(root, followlinks=False, onerror=walk_error):
+        for filename in directories + files:
+            path = Path(parent) / filename
+            name = path.relative_to(root).as_posix()
+            target = resolve_upload_path(path, name)
+            if not target.is_relative_to(root):
+                raise ReportError(f"Upload path {name!r} resolves outside the upload root. Remove the link or copy the intended file into the report directory.")
+            if path.is_symlink() and target.is_dir():
+                raise ReportError(f"Directory symlink {name!r} is not supported. Replace it with a real directory containing the intended report files.")
+            if target.is_file():
+                relative[name] = target
+    return relative
+
+def snapshot_files(root, relative, directory):
+    """Pin each path component with openat/O_NOFOLLOW, then retain its bytes.
+
+    Resolved paths alone are not safe to reopen: a file or parent directory can
+    become a symlink between validation and open. Start at / and open every
+    directory component without following links, including the root's ancestors.
+    """
+    if os.open not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"):
+        raise ReportError("Safe uploads require POSIX dir_fd and O_NOFOLLOW support. Run the uploader on Linux or macOS.")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(root.anchor, directory_flags)
+    snapshots = {}
+    name = "upload root"
+    try:
+        for part in root.parts[1:]:
+            next_fd = os.open(part, directory_flags, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        for name, target in relative.items():
+            parts = target.relative_to(root).parts
+            parent_fd = os.dup(fd)
+            try:
+                for part in parts[:-1]:
+                    next_fd = os.open(part, directory_flags, dir_fd=parent_fd)
+                    os.close(parent_fd)
+                    parent_fd = next_fd
+                file_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
+                with os.fdopen(file_fd, "rb") as handle:
+                    if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                        raise ReportError(f"Upload path {name!r} is no longer a regular file. Restage the bundle and retry.")
+                    snapshot = Path(directory) / str(len(snapshots))
+                    with snapshot.open("wb") as output:
+                        shutil.copyfileobj(handle, output)
+                snapshots[name] = snapshot
+            finally:
+                os.close(parent_fd)
+    except OSError:
+        raise ReportError(f"Cannot safely open or snapshot {name!r}: a path changed, is inaccessible, or temporary storage is unavailable. Restage the bundle without changing it during upload, check permissions and temporary disk space, and retry.") from None
+    finally:
+        os.close(fd)
+    return snapshots
+
 def upload(source, *, title, category, entry_file=None, access="internal", tags="", description="", token, progress=None):
     if not title or category not in ("benchmarks", "ci", "investigations", "presentations"):
         raise ReportError("A title and supported category are required for upload")
     if access not in ("internal", "public"):
         raise ReportError("Access must be internal or public")
-    source = Path(source).resolve()
+    source = resolve_upload_path(Path(source), "source")
     if source.is_file():
         if source.suffix.lower() not in (".html", ".htm"): raise ReportError("Single-file uploads must be HTML files")
         entry = source.name
         if entry_file and entry_file.replace("\\", "/") != entry: raise ReportError("--entry-file must match the supplied HTML filename")
         relative = {entry: source}
+        root = source.parent
     elif source.is_dir():
         if not entry_file: raise ReportError("--entry-file is required when uploading a directory")
         root = source; entry = entry_file.replace("\\", "/")
-        files = [path for path in root.rglob("*") if path.is_file()]
-        relative = {path.relative_to(root).as_posix(): path for path in files}
+        relative = directory_files(root)
     else: raise ReportError(f"Source not found: {source}", "Source not found; supply a file or directory on the MCP server host.")
     if entry not in relative: raise ReportError(f"Entry file not found: {entry}", "Entry file not found; use an exact directory-relative path without ./ or ../.")
-    payload = {"title": title, "category": category, "access": "authenticated" if access == "internal" else "public", "tags": [tag.strip() for tag in tags.split(",") if tag.strip()], "description": description, "entryFile": entry, "pathMode": "preserve", "files": [{"name": name, "size": path.stat().st_size, "contentType": mimetypes.guess_type(name)[0] or "application/octet-stream"} for name, path in relative.items()]}
+    with tempfile.TemporaryDirectory(prefix="psap-report-") as directory:
+        snapshots = snapshot_files(root, relative, directory)
+        payload = {"title": title, "category": category, "access": "authenticated" if access == "internal" else "public", "tags": [tag.strip() for tag in tags.split(",") if tag.strip()], "description": description, "entryFile": entry, "pathMode": "preserve", "files": [{"name": name, "size": path.stat().st_size, "contentType": mimetypes.guess_type(name)[0] or "application/octet-stream"} for name, path in snapshots.items()]}
+        return publish_snapshot(snapshots, payload, token, progress)
+
+def publish_snapshot(snapshots, payload, token, progress):
     plan = request(f"{API}/reports", "POST", payload, token)
     if plan.get("pathMode") != "preserve": raise ReportError("The report API did not confirm pathMode=preserve; update the report service before uploading")
     planned = [target["name"] for target in plan["uploads"]]
-    if len(planned) != len(relative) or set(planned) != set(relative): raise ReportError("Upload plan does not match the source files")
+    if len(planned) != len(snapshots) or set(planned) != set(snapshots): raise ReportError("Upload plan does not match the source files")
     for target in plan["uploads"]:
-        path = relative[target["name"]]
-        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        content_type = mimetypes.guess_type(target["name"])[0] or "application/octet-stream"
         try:
-            with path.open("rb") as handle:
-                urlopen(Request(target["url"], data=handle.read(), method="PUT", headers={"Content-Type": content_type, "Cache-Control": "no-cache"}), timeout=300).read()
+            urlopen(Request(target["url"], data=snapshots[target["name"]].read_bytes(), method="PUT", headers={"Content-Type": content_type, "Cache-Control": "no-cache"}), timeout=300).read()
         except Exception:
             raise ReportError("File upload failed. Check local file readability and network access; retry with a fresh upload plan.") from None
         if progress: progress(f"Uploaded {target['name']}")
