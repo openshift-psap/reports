@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 const source = fs.readFileSync('_infra/lambda-token-admin/index.js', 'utf8');
 const id = '12345678-1234-1234-1234-123456789abc';
 
-function setup(overrides = {}, { reportId = id, listings = {} } = {}) {
+function setup(overrides = {}, { reportId = id, listings = {}, onSend = () => undefined } = {}) {
   const original = {
     id: reportId, reportId, title: 'Old title', description: 'Old description', category: 'ci',
     tags: ['gpu'], author: 'Owner', version: 2, isLatest: true, status: 'final',
@@ -19,6 +19,7 @@ function setup(overrides = {}, { reportId = id, listings = {} } = {}) {
   };
   const calls = [];
   const objects = new Map([[`report-meta/authenticated/${reportId}.json`, original]]);
+  for (const keys of Object.values(listings)) for (const key of keys) objects.set(key, 'file');
   const commands = {};
   for (const name of ['GetObjectCommand', 'PutObjectCommand', 'DeleteObjectCommand', 'HeadObjectCommand', 'ListObjectsV2Command', 'DeleteObjectsCommand']) {
     commands[name] = class { constructor(input) { this.name = name; this.input = input; } };
@@ -26,6 +27,8 @@ function setup(overrides = {}, { reportId = id, listings = {} } = {}) {
   commands.S3Client = class {
     async send(command) {
       calls.push(command);
+      const injected = await onSend(command, objects);
+      if (injected !== undefined) return injected;
       const { Key, Body } = command.input;
       if (command.name === 'GetObjectCommand') {
         if (!objects.has(Key)) throw new Error('NoSuchKey');
@@ -34,7 +37,13 @@ function setup(overrides = {}, { reportId = id, listings = {} } = {}) {
       if (command.name === 'PutObjectCommand') objects.set(Key, JSON.parse(Body));
       if (command.name === 'DeleteObjectCommand') objects.delete(Key);
       if (command.name === 'DeleteObjectsCommand') (command.input.Delete.Objects || []).forEach(item => objects.delete(item.Key));
-      if (command.name === 'ListObjectsV2Command') return { Contents: (listings[command.input.Prefix] || []).map(key => ({ Key: key })) };
+      if (command.name === 'ListObjectsV2Command') {
+        const { Prefix, ContinuationToken, MaxKeys = 1000 } = command.input;
+        const keys = [...objects.keys()].filter(key => key.startsWith(Prefix) && (!ContinuationToken || key > ContinuationToken)).sort();
+        const page = keys.slice(0, MaxKeys);
+        return { Contents: page.map(Key => ({ Key })), IsTruncated: keys.length > MaxKeys,
+          ...(keys.length > MaxKeys ? { NextContinuationToken: page[page.length - 1] } : {}) };
+      }
       return {};
     }
   };
@@ -372,7 +381,7 @@ test('deleting one revision cannot remove another revision bundle', async () => 
   const result = await request(undefined, { method: 'DELETE', reportId: firstId });
   assert.equal(result.statusCode, 200);
   const prefixes = calls.filter(call => call.name === 'ListObjectsV2Command').map(call => call.input.Prefix);
-  assert.deepEqual(prefixes, [`${firstKey}/`]);
+  assert.deepEqual(prefixes, [`${firstKey}/`, `${firstKey}/`]);
   assert.equal(calls.some(call => call.name === 'DeleteObjectCommand' && call.input.Key.includes(secondId)), false);
   assert.equal(objects.has(`report-meta/authenticated/${firstId}.json`), false);
   assert.equal(objects.has(`report-meta/authenticated/${secondId}.json`), true);
@@ -391,5 +400,121 @@ test('malformed recorded bundle prefixes are rejected without listing or deletin
     assert.match(result.data.error, /Invalid report storage path/);
     assert.equal(calls.some(call => ['ListObjectsV2Command', 'DeleteObjectsCommand'].includes(call.name)), false);
     assert.equal(objects.has(`report-meta/authenticated/${id}.json`), true);
+  }
+});
+
+test('partial S3 errors retain metadata, expose only scoped details, and allow retry', async () => {
+  for (const access of ['authenticated', 'public']) {
+    const key = bundleKey.replace(/^private/, access === 'public' ? 'public' : 'private');
+    const meta = `report-meta/${access}/${id}.json`;
+    const files = [`${key}/pages/report.html`, `${key}/assets/style.css`];
+    let fail = true;
+    const state = setup({ baseKey: key }, { listings: { [`${key}/`]: files }, onSend(command, objects) {
+      if (command.name === 'DeleteObjectsCommand' && fail) {
+        objects.delete(files[0]);
+        return { Errors: [{ Key: files[1], Code: 'AccessDenied', Message: 'sensitive storage details' }] };
+      }
+    } });
+    state.objects.set(meta, state.original);
+    const result = await state.request(undefined, { method: 'DELETE', access });
+    assert.equal(result.statusCode, 502);
+    assert.equal(result.data.stage, 'files');
+    assert.equal(result.data.failedCount, 1);
+    assert.match(result.data.error, /Retry Delete/);
+    assert.doesNotMatch(result.body, /sensitive storage|assets\/style/);
+    assert.equal(state.objects.has(meta), true);
+    assert.equal(state.objects.has(files[1]), true);
+    assert.equal(state.calls.some(call => call.name === 'DeleteObjectCommand'), false);
+    fail = false;
+    assert.equal((await state.request(undefined, { method: 'DELETE', access })).statusCode, 200);
+    assert.equal(state.objects.has(meta), false);
+    assert.equal(state.objects.has(files[1]), false);
+    assert.equal(state.calls.at(-1).input.Key, meta);
+    assert.equal(state.calls.at(-2).input.MaxKeys, 1);
+  }
+});
+
+test('thrown S3 listing, batch deletion, and verification errors retain metadata', async () => {
+  for (const stage of ['list', 'delete', 'verify']) {
+    const { request, objects, calls } = setup({ baseKey: bundleKey }, {
+      listings: { [`${bundleKey}/`]: [`${bundleKey}/index.html`] },
+      onSend(command) {
+        if ((stage === 'list' && command.name === 'ListObjectsV2Command' && !command.input.MaxKeys) ||
+            (stage === 'delete' && command.name === 'DeleteObjectsCommand') ||
+            (stage === 'verify' && command.input.MaxKeys === 1)) throw new Error('private backend error');
+      },
+    });
+    const result = await request(undefined, { method: 'DELETE' });
+    assert.equal(result.statusCode, 502, stage);
+    assert.doesNotMatch(result.body, /private backend error/);
+    assert.equal(objects.has(`report-meta/authenticated/${id}.json`), true);
+    assert.equal(calls.some(call => call.name === 'DeleteObjectCommand'), false);
+  }
+});
+
+test('remaining objects and incomplete listings prevent metadata deletion', async () => {
+  for (const mode of ['remaining', 'truncated']) {
+    const { request, objects, calls } = setup({ baseKey: bundleKey }, {
+      onSend(command) {
+        if (command.name !== 'ListObjectsV2Command') return;
+        if (mode === 'truncated') return { Contents: [], IsTruncated: true };
+        if (command.input.MaxKeys === 1) return { Contents: [{ Key: `${bundleKey}/late.html` }] };
+      },
+    });
+    assert.equal((await request(undefined, { method: 'DELETE' })).statusCode, 502);
+    assert.equal(objects.has(`report-meta/authenticated/${id}.json`), true);
+    assert.equal(calls.some(call => call.name === 'DeleteObjectCommand'), false);
+  }
+});
+
+test('multi-page deletion verifies empty prefix before deleting metadata', async () => {
+  const files = Array.from({ length: 2005 }, (_, index) => `${bundleKey}/assets/${String(index).padStart(4, '0')}.txt`);
+  const { request, calls, objects } = setup({ baseKey: bundleKey }, { listings: { [`${bundleKey}/`]: files } });
+  const result = await request(undefined, { method: 'DELETE' });
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.data, { deleted: id });
+  assert.deepEqual(calls.filter(call => call.name === 'DeleteObjectsCommand').map(call => call.input.Delete.Objects.length), [1000, 1000, 5]);
+  assert.equal(files.some(key => objects.has(key)), false);
+  assert.equal(calls.at(-2).input.MaxKeys, 1);
+  assert.equal(calls.at(-1).name, 'DeleteObjectCommand');
+});
+
+test('errors on a later deletion page retain metadata and remaining files for retry', async () => {
+  const files = Array.from({ length: 1001 }, (_, index) => `${bundleKey}/${String(index).padStart(4, '0')}.txt`);
+  let batches = 0;
+  const state = setup({ baseKey: bundleKey }, { listings: { [`${bundleKey}/`]: files }, onSend(command) {
+    if (command.name === 'DeleteObjectsCommand' && ++batches === 2) return { Errors: [{ Code: 'InternalError' }] };
+  } });
+  assert.equal((await state.request(undefined, { method: 'DELETE' })).statusCode, 502);
+  assert.equal(state.objects.has(`report-meta/authenticated/${id}.json`), true);
+  assert.equal(files.filter(key => state.objects.has(key)).length, 1);
+  assert.equal((await state.request(undefined, { method: 'DELETE' })).statusCode, 200);
+});
+
+test('metadata deletion failure after file cleanup remains retryable', async () => {
+  let fail = true;
+  const state = setup({ baseKey: bundleKey }, { listings: { [`${bundleKey}/`]: [`${bundleKey}/index.html`] }, onSend(command) {
+    if (command.name === 'DeleteObjectCommand' && fail) throw new Error('metadata unavailable');
+  } });
+  const result = await state.request(undefined, { method: 'DELETE' });
+  assert.equal(result.statusCode, 502);
+  assert.equal(result.data.stage, 'metadata');
+  assert.equal(state.objects.has(`report-meta/authenticated/${id}.json`), true);
+  assert.equal(state.objects.has(`${bundleKey}/index.html`), false);
+  fail = false;
+  assert.equal((await state.request(undefined, { method: 'DELETE' })).statusCode, 200);
+});
+
+test('already-empty bundles are verified and external entries only delete metadata', async () => {
+  const empty = setup({ baseKey: bundleKey });
+  assert.equal((await empty.request(undefined, { method: 'DELETE' })).statusCode, 200);
+  assert.deepEqual(empty.calls.map(call => call.name), ['GetObjectCommand', 'ListObjectsV2Command', 'ListObjectsV2Command', 'DeleteObjectCommand']);
+  for (const fail of [false, true]) {
+    const external = setup({ externalUrl: 'https://example.org/report' }, { onSend(command) {
+      if (fail && command.name === 'DeleteObjectCommand') throw new Error('unavailable');
+    } });
+    assert.equal((await external.request(undefined, { method: 'DELETE' })).statusCode, fail ? 502 : 200);
+    assert.deepEqual(external.calls.map(call => call.name), ['GetObjectCommand', 'DeleteObjectCommand']);
+    assert.equal(external.objects.has(`report-meta/authenticated/${id}.json`), fail);
   }
 });

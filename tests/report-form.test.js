@@ -7,6 +7,31 @@ const vm = require('node:vm');
 const template = fs.readFileSync('_generator/generate_index.py', 'utf8');
 const workstreams = JSON.parse(fs.readFileSync('_generator/workstreams.json')).workstreams;
 
+test('failed deletion preserves the report and retry controls; only success removes it', async () => {
+  for (const failure of ['api', 'network', 'invalid-json', 'success']) {
+    const alerts = [];
+    let renders = 0;
+    const context = {
+      TOKEN_API: 'https://api.example', REPORTS: [{ id: 'owned-report' }],
+      confirm: () => true, alert: message => alerts.push(message),
+      rebuildFilters() {}, render() { renders++; },
+      async fetch() {
+        if (failure === 'network') throw new Error('connection lost');
+        return { ok: failure === 'success', async json() {
+          if (failure === 'invalid-json') throw new Error('invalid JSON');
+          return { error: 'Some files may already be deleted. Retry Delete.' };
+        } };
+      },
+    };
+    vm.runInNewContext(template.slice(template.indexOf('async function deleteReport('), template.indexOf('async function archiveReport(')), context);
+    await context.deleteReport('owned-report', 'authenticated', 'Report');
+    assert.equal(context.REPORTS.length, failure === 'success' ? 0 : 1, failure);
+    assert.equal(renders, failure === 'success' ? 1 : 0, failure);
+    if (failure !== 'success') assert.match(alerts[0], /[Rr]etry Delete/);
+    else assert.deepEqual(alerts, []);
+  }
+});
+
 test('save and cancel share a compact action row and base button styling', () => {
   const actions = template.match(/<div class="report-form-actions">([\s\S]*?)<\/div>/);
   assert.ok(actions, 'Form actions must stay together rather than fill separate grid columns');

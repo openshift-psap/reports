@@ -185,9 +185,21 @@ async function deleteReportObjects(prefix) {
   do {
     const page = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix, ContinuationToken: token }));
     const objects = (page.Contents || []).map(item => ({ Key: item.Key }));
-    if (objects.length) await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: objects, Quiet: true } }));
+    for (let offset = 0; offset < objects.length; offset += 1000) {
+      const result = await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: objects.slice(offset, offset + 1000), Quiet: true } }));
+      if (result.Errors && result.Errors.length) {
+        const error = new Error('Some report files could not be deleted');
+        error.failedCount = result.Errors.length;
+        throw error;
+      }
+    }
+    if (page.IsTruncated && !page.NextContinuationToken) throw new Error('Incomplete report file listing');
     token = page.NextContinuationToken;
   } while (token);
+  const remaining = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix, MaxKeys: 1 }));
+  if ((remaining.Contents || []).length || remaining.IsTruncated || remaining.NextContinuationToken) {
+    throw new Error('Report files remain after deletion');
+  }
 }
 
 function reportEntry(submission) {
@@ -428,9 +440,10 @@ exports.handler = async (event) => {
     let entry;
     try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
     if (String(entry.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may delete only your own reports' }, origin);
-    if (entry.externalUrl) { await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-meta/${access}/${id}.json` })); return response(200, { deleted: id }, origin); }
     let prefix;
-    if (entry.baseKey !== undefined && entry.baseKey !== null) {
+    if (entry.externalUrl) {
+      prefix = null;
+    } else if (entry.baseKey !== undefined && entry.baseKey !== null) {
       prefix = reportBundlePrefix(entry, access, id);
       if (!prefix) return response(400, { error: 'Invalid report storage path' }, origin);
     } else {
@@ -439,8 +452,21 @@ exports.handler = async (event) => {
       prefix = new URL(entry.path).pathname.replace(/^\//, '').replace(/\/[^/]+$/, '/');
       if (!prefix.startsWith(access === 'public' ? 'public/' : 'private/')) return response(400, { error: 'Invalid report storage path' }, origin);
     }
-    await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-meta/${access}/${id}.json` }));
-    await deleteReportObjects(prefix);
+    let stage = 'files';
+    try {
+      if (prefix) await deleteReportObjects(prefix);
+      stage = 'metadata';
+      await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `report-meta/${access}/${id}.json` }));
+    } catch (error) {
+      const failedCount = Number.isInteger(error.failedCount) ? error.failedCount : undefined;
+      console.log(JSON.stringify({ event: 'report_deletion_failed', id, access, stage, failedCount }));
+      return response(502, {
+        error: stage === 'files'
+          ? 'Report file deletion could not be verified. The report listing was retained for retry; some files may already be deleted. Retry Delete. If this persists, contact the report hub administrator.'
+          : 'Report metadata deletion could not be confirmed. Bundle deletion completed (or this is an external link). Refresh the listing and retry Delete if the report remains.',
+        stage, ...(failedCount !== undefined ? { failedCount } : {}),
+      }, origin);
+    }
     return response(200, { deleted: id }, origin);
   }
 
