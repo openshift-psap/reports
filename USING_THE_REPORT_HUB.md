@@ -78,6 +78,26 @@ Workstream owners curate the optional prominent tag shortcuts in [`_generator/wo
 
 After signing in with GitHub, a **Delete** button appears only on reports attributed to your verified GitHub handle. Confirming deletion permanently removes that revision's metadata. For new uploads, whose metadata records the bundle `baseKey`, it also removes every uploaded object under the bundle prefix, including a nested entry page and its sibling assets. Older reports without `baseKey` use the previous fallback, which removes the directory containing the entry page; files outside that directory may remain. This cannot be undone through the hub.
 
+With the updated deletion service, bundle files are deleted first, then the
+service verifies the bundle prefix is empty before removing metadata. A partial
+S3 deletion, storage error, or unsuccessful verification returns an error and
+retains the listing so the owner can retry **Delete**. Some files may already be
+gone, so a report whose deletion failed may no longer render completely.
+Retries can finish deletion even when some or all files were already removed.
+
+If file cleanup succeeds but metadata deletion fails, the API still reports
+failure. Refresh the listing and retry **Delete** if the entry remains. Do the
+same after a network error where the outcome is unknown. Contact the hub
+administrator if failures persist; include the report ID and whether the error
+concerns files or metadata. External-link entries only require metadata deletion.
+The hub keeps its existing card and controls on an error rather than claiming
+successful removal.
+
+These guarantees require deployment of the updated API and hub; merging source
+alone does not verify a running deployment. This deletion fix does not revoke
+still-valid upload URLs or clean up abandoned uploads; that lifecycle work is
+tracked separately in [#15](https://github.com/openshift-psap/reports/issues/15).
+
 Use **Archive** instead to retire an old or deprecated report without deleting its files. Archived reports remain available through their links and can be found with the status filter, but are clearly marked as archived.
 
 ## Update a report

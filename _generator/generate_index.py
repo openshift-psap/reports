@@ -578,9 +578,13 @@ function updateReport(id) {
 
 async function deleteReport(id, access, title) {
   if (!confirm(`Permanently delete “${title}” and all its files?`)) return;
-  const response = await fetch(`${TOKEN_API}/reports?access=${encodeURIComponent(access)}&id=${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include" });
-  const data = await response.json();
-  if (!response.ok) return alert(data.error || "Could not delete report");
+  try {
+    const response = await fetch(`${TOKEN_API}/reports?access=${encodeURIComponent(access)}&id=${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include" });
+    const data = await response.json();
+    if (!response.ok) return alert(data.error || "Deletion failed. Some files may already be deleted. Retry Delete; refresh the listing first if the outcome is uncertain.");
+  } catch (error) {
+    return alert("Deletion could not be confirmed. Some files may already be deleted. Refresh the listing and retry Delete if the report remains.");
+  }
   const index = REPORTS.findIndex(report => report.id === id);
   if (index >= 0) REPORTS.splice(index, 1);
   rebuildFilters(); render();
