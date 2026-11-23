@@ -6,6 +6,12 @@ const { publication } = require('./publication-s3');
 exports.handler = async (_event, context) => {
   const service = publication();
   const key = 'report-reconciliation-v2/checkpoint.json';
+  // Bootstrap before GET: without bucket-wide ListBucket, a missing key can
+  // return 403. Never reinterpret AccessDenied as an absent checkpoint.
+  try { await service.store.put(key, { cursor: null, lastFullScan: null }); }
+  catch (error) {
+    if (error.name !== 'PreconditionFailed' && error.$metadata?.httpStatusCode !== 412) throw error;
+  }
   let checkpoint = await service.store.get(key);
   let pages = 0;
   do {

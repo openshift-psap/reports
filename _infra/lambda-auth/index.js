@@ -306,7 +306,7 @@ exports.handler = async (event) => {
     if (relative.split('/').some(part => !part || part === '.' || part === '..')) return deny('400', 'Invalid report path');
     if (access === 'private') {
       const cookie = parseCookies(headers)[CONFIG.cookieName];
-      if (!cookie || !verifyCookie(cookie)) return loginPage(uri);
+      if (!cookie || !verifyCookie(cookie)) return loginPage(uri + (request.querystring ? '?' + request.querystring : ''));
     }
     try {
       const result = await s3.send(new GetObjectCommand({ Bucket: CONFIG.s3Bucket, Key: `report-control-v2/${reportId}.json` }));

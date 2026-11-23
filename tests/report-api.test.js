@@ -90,6 +90,25 @@ function setup(overrides = {}, { reportId = id, listings = {}, onSend = () => un
 
 const metadata = { action: 'metadata', title: 'New title', category: 'benchmarks', description: 'Updated', tags: ['rhoai', 'gpu'] };
 
+test('adopting and replacing legacy current revision preserves deduplicated history counts', async () => {
+  const f = require('./helpers/publication-fixture').fixture();
+  const api = setup({}, { publication: f.service });
+  const oldId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  api.objects.set(`report-meta/authenticated/${oldId}.json`, { ...api.original, id: oldId, version: 1, isLatest: false });
+  assert.equal((await api.request(metadata)).statusCode, 200);
+  let listing = await api.request(undefined, { method: 'GET' });
+  assert.equal(listing.data.reports.length, 1);
+  assert.equal(listing.data.reports[0].versionCount, 2);
+  const plan = await api.upload({ ...f.submission, access: 'authenticated', parentId: id });
+  f.fill(plan.data.id);
+  assert.equal((await api.complete(plan.data.id)).statusCode, 201);
+  listing = await api.request(undefined, { method: 'GET' });
+  assert.equal(listing.data.reports[0].versionCount, 3);
+  await f.service.remove(id, 'owner', 'authenticated');
+  listing = await api.request(undefined, { method: 'GET' });
+  assert.equal(listing.data.reports[0].versionCount, 2, 'deleted managed revision is not resurrected from legacy metadata');
+});
+
 test('metadata edits change only info; no file operations or new revision', async () => {
   const { request, original, calls } = setup();
   const result = await request(metadata);

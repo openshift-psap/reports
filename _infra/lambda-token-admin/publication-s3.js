@@ -38,7 +38,9 @@ function createStore({ s3, bucket, stagingBucket }) {
       try {
         const response = await send('GetObject', { Bucket: bucket, Key });
         if (!response.ETag) throw new Error('Missing concurrency token');
-        return { value: JSON.parse(await response.Body.transformToString()), etag: response.ETag };
+        const value = JSON.parse(await response.Body.transformToString());
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid stored document root');
+        return { value, etag: response.ETag };
       } catch (error) { if (missing(error)) return null; throw error; }
     },
     async put(Key, value, etag) {

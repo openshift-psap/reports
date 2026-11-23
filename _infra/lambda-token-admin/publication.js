@@ -7,6 +7,8 @@ const DAY = 86400000;
 const RETENTION = 7 * DAY;
 const LEASE = 120000;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const REPORT_ID = /^(legacy-)?[a-f0-9-]+$/;
+const validReportId = id => typeof id === 'string' && id.length <= 64 && REPORT_ID.test(id);
 const controlKey = id => `report-control-v2/${id}.json`;
 const locatorKey = id => `report-locators-v2/${id}.json`;
 const conflict = error => [409, 412].includes(error.$metadata?.httpStatusCode) || ['PreconditionFailed', 'ConditionalRequestConflict'].includes(error.name);
@@ -40,7 +42,7 @@ function createPublication({ store, domain, now = Date.now, uuid = crypto.random
     fail(409, 'Report changed concurrently; retry the operation');
   }
   async function locate(id) {
-    if (!UUID.test(id) && !/^legacy-[a-f0-9-]+$/.test(id)) return null;
+    if (!validReportId(id)) return null;
     return (await store.get(locatorKey(id)))?.value.reportId || null;
   }
   async function locator(id, reportId) {
@@ -58,6 +60,7 @@ function createPublication({ store, domain, now = Date.now, uuid = crypto.random
   // Called for legacy mutations during rollout as well as legacy replacements.
   // All writers must use this API version before v2 issuance is enabled.
   async function adopt(legacy, owner, prefix) {
+    if (!validReportId(legacy.id)) fail(400, 'Invalid report identifier');
     const hash = crypto.createHash('sha256').update(`legacy:${legacy.id}`).digest('hex');
     const legacyId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
     const reportId = UUID.test(legacy.reportId) ? legacy.reportId : UUID.test(legacy.id) ? legacy.id : legacyId;
@@ -166,22 +169,26 @@ function createPublication({ store, domain, now = Date.now, uuid = crypto.random
   }
 
   async function listReports(access, history) {
-    const reports = [], migrated = new Set();
+    const reports = [], allReports = [], migrated = new Set();
     let cursor;
     do {
       const page = await store.list(cursor);
-      for (const id of page.ids) {
-        const current = await read(id);
+      const documents = await Promise.all(page.ids.map(id => read(id)));
+      for (const current of documents) {
         if (!current) continue;
         const doc = current.value;
         for (const r of Object.values(doc.revisions)) {
           migrated.add(r.id);
-          if (['COMMITTED', 'DELETING'].includes(r.state) && r.metadata.authenticated === (access === 'authenticated') && (history || doc.head === r.id || r.state === 'DELETING')) reports.push(entry(doc, r));
+          if (['COMMITTED', 'DELETING'].includes(r.state) && r.metadata.authenticated === (access === 'authenticated')) {
+            const report = entry(doc, r);
+            allReports.push(report);
+            if (history || doc.head === r.id || r.state === 'DELETING') reports.push(report);
+          }
         }
       }
       cursor = page.cursor;
     } while (cursor);
-    return { reports, migrated };
+    return { reports, allReports, migrated };
   }
 
   async function dashboard(owner, cursor, detailId) {
@@ -257,28 +264,31 @@ function createPublication({ store, domain, now = Date.now, uuid = crypto.random
 
   async function reconcileReport(reportId) {
     const lease = uuid();
+    const needsAbort = r => (r.state === 'OPEN' && now() >= r.retainUntil) ||
+      (r.state === 'PREPARING' && now() >= Math.min(r.leaseUntil, r.retainUntil));
+    const cleanupDue = r => !r.adopted && !['OPEN', 'PREPARING', 'DELETING'].includes(r.state) &&
+      (r.state !== 'ABORTED' || now() >= r.retainUntil) && !(r.cleanup?.nextRetryAt > now());
     const claimed = await change(reportId, doc => {
       if (!doc.owner) return { unchanged: true, value: false };
       if (doc.cleanupLease && doc.cleanupLease.until > now()) return { unchanged: true, value: false };
+      if (!Object.values(doc.revisions).some(r => needsAbort(r) || cleanupDue(r))) return { unchanged: true, value: false };
       doc.cleanupLease = { id: lease, until: now() + LEASE };
       for (const r of Object.values(doc.revisions)) {
-        if ((r.state === 'OPEN' && now() >= r.retainUntil) || (r.state === 'PREPARING' && now() >= Math.min(r.leaseUntil, r.retainUntil))) {
+        if (needsAbort(r)) {
           r.state = 'ABORTED'; r.failure ||= 'expired_or_interrupted';
         }
       }
       return true;
     });
-    if (!claimed.result) return;
     const revisions = Object.values(claimed.doc.revisions);
     const pending = revisions.filter(r => ['OPEN', 'PREPARING'].includes(r.state));
     const due = revisions.filter(r => r.state === 'ABORTED' && now() >= r.retainUntil && !r.cleanup?.empty);
     log({ event: 'upload_lifecycle_observed', reportId, pending: pending.length, cleanupBacklog: due.length,
       oldestPendingSeconds: pending.length ? Math.floor((now() - Math.min(...pending.map(r => r.createdAt))) / 1000) : 0,
       oldestCleanupDueSeconds: due.length ? Math.floor((now() - Math.min(...due.map(r => r.retainUntil))) / 1000) : 0 });
+    if (!claimed.result) return;
     for (const r of Object.values(claimed.doc.revisions)) {
-      if (['OPEN', 'PREPARING', 'DELETING'].includes(r.state)) continue;
-      if (r.state === 'ABORTED' && now() < r.retainUntil) continue;
-      if (r.cleanup?.nextRetryAt > now()) continue;
+      if (!cleanupDue(r)) continue;
       let success = false;
       try {
         // The state above is terminal: no attempt in this set can later commit.

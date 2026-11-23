@@ -186,6 +186,61 @@ test('legacy external links never generate staging cleanup work', async () => {
   assert.equal(f.logs.some(log => log.event === 'upload_cleanup_failed'), false);
 });
 
+test('adoption and lookup accept safe route IDs and reject unsafe IDs', async () => {
+  const f = fixture();
+  for (const id of ['abcdef', 'legacy-abcdef']) {
+    const reportId = await f.service.adopt({ id, author: 'owner', authenticated: false, externalUrl: 'https://example.org' }, 'owner', null);
+    assert.equal(await f.service.locate(id), reportId);
+    assert.equal((await f.service.edit(id, 'owner', 'public', { title: 'Edited' })).title, 'Edited');
+  }
+  for (const id of ['../abcdef', 'a/b', 'a'.repeat(65)]) {
+    await assert.rejects(f.service.adopt({ id }, 'owner', null), { status: 400 });
+    assert.equal(await f.service.locate(id), null);
+  }
+});
+
+test('idle scans avoid control writes but late bytes still get swept after URL expiry', async () => {
+  const f = fixture(), plan = await f.plan();
+  const before = structuredClone(f.documents.get(controlKey(plan.id)));
+  await f.service.reconcile();
+  assert.deepEqual(f.documents.get(controlKey(plan.id)), before);
+  f.fill(plan.id); await f.service.complete(plan.id, 'owner');
+  await f.service.reconcile();
+  const cleaned = structuredClone(f.documents.get(controlKey(plan.id)));
+  await f.service.reconcile();
+  assert.deepEqual(f.documents.get(controlKey(plan.id)), cleaned);
+  f.advance(RETENTION);
+  f.put(plan.id, f.submission.files[0], 'late');
+  await f.service.reconcile();
+  assert.equal(f.staging.size, 0);
+  assert.equal(f.published.size, 2);
+});
+
+test('listing starts all control reads in a page concurrently', async () => {
+  const f = fixture(); await f.plan(); await f.plan();
+  let started = 0, release;
+  const barrier = new Promise(resolve => { release = resolve; });
+  f.hooks.get = async key => {
+    if (!key.startsWith('report-control-v2/')) return;
+    if (++started === 2) release();
+    await barrier;
+  };
+  await f.service.listReports('public');
+  assert.equal(started, 2);
+});
+
+test('verified cleanup still revisits unselected attempts for late copier writes', async () => {
+  const f = fixture(), plan = await f.plan(); f.fill(plan.id);
+  f.hooks.afterCopy = () => { throw new Error('interrupted copier'); };
+  await assert.rejects(f.service.complete(plan.id, 'owner'), { status: 502 });
+  const attempt = Object.values(f.documents.get(controlKey(plan.id)).value.revisions[plan.id].attempts)[0];
+  f.advance(RETENTION); await f.service.reconcile();
+  assert.equal(f.published.size, 0);
+  f.published.set(attempt.prefix + 'site/index.html', 'late copy');
+  f.advance(300001); await f.service.reconcile();
+  assert.equal(f.published.size, 0);
+});
+
 test('conditional-write exhaustion leaves upload unpublished and duplicate active completion conflicts', async () => {
   const f = fixture(), plan = await f.plan(); f.fill(plan.id);
   let checked = false;

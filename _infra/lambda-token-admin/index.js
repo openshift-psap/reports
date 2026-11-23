@@ -207,10 +207,17 @@ async function listLegacyReports(access, includeSuperseded = false) {
 }
 
 async function listReports(access, includeSuperseded = false) {
-  const legacy = await listLegacyReports(access, includeSuperseded);
-  if (!lifecycle()) return legacy;
+  if (!lifecycle()) return listLegacyReports(access, includeSuperseded);
+  const legacy = await listLegacyReports(access, true);
   const current = await lifecycle().listReports(access, includeSuperseded);
-  return [...legacy.filter(entry => !current.migrated.has(entry.id)), ...current.reports]
+  const remaining = legacy.filter(entry => !current.migrated.has(entry.id));
+  const counts = new Map();
+  for (const entry of [...remaining, ...current.allReports]) {
+    const id = entry.reportId || entry.id;
+    counts.set(id, (counts.get(id) || 0) + 1);
+  }
+  return [...remaining.filter(entry => includeSuperseded || entry.isLatest !== false), ...current.reports]
+    .map(entry => ({ ...entry, versionCount: counts.get(entry.reportId || entry.id) || 1 }))
     .sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
 }
 

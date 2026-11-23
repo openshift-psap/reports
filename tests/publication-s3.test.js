@@ -70,3 +70,30 @@ test('copies pin source version and reject destination corruption', async () => 
 test('staging without versioning is refused before signed URL issuance', async () => {
   await assert.rejects(load(async () => ({ Status: 'Suspended' })).checkStaging(), /versioned staging/);
 });
+
+test('destructive prefix guard rejects broad and malformed prefixes before S3 access', async () => {
+  const calls = [], store = load(async command => { calls.push(command); return {}; });
+  for (const prefix of ['', 'public/', 'public/ci/', 'report-objects-v2/x/', 'public/ci/../private/x/', 'public/ci/old']) {
+    assert.throws(() => store.deletePublished(prefix), /Invalid bundle prefix/);
+  }
+  assert.equal(calls.length, 0);
+  for (const prefix of ['report-objects-v2/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000002/', 'public/ci/old/']) {
+    await store.deletePublished(prefix);
+    assert.equal(calls.at(-1).input.Prefix, prefix);
+  }
+});
+
+test('storage rejects malformed document roots while retaining valid ETags', async () => {
+  for (const value of [null, [], 'text', 42, true, { cursor: null }]) {
+    const store = load(async () => ({ ETag: 'etag', Body: { transformToString: async () => JSON.stringify(value) } }));
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      assert.equal((await store.get('checkpoint')).etag, 'etag');
+    } else await assert.rejects(store.get('checkpoint'), /Invalid stored document root/);
+  }
+});
+
+test('storage propagates conditional conflicts and rejects truncated lists without cursors', async () => {
+  const error = Object.assign(new Error('conflict'), { name: 'PreconditionFailed', $metadata: { httpStatusCode: 412 } });
+  await assert.rejects(load(async () => { throw error; }).put('control', {}, 'etag'), actual => actual === error);
+  await assert.rejects(load(async () => ({ IsTruncated: true })).list(), /Incomplete control listing/);
+});

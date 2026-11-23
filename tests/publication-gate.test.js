@@ -21,12 +21,21 @@ function gate(f) {
     return require(name);
   } };
   vm.runInNewContext(fs.readFileSync('_infra/lambda-auth/index.js', 'utf8').replaceAll('__COOKIE_SECRET__', 'test-secret'), context);
-  return (uri, method = 'GET', identity) => {
+  return (uri, method = 'GET', identity, querystring = '') => {
     const value = `authenticated:${identity}:${Date.now()}:owner`;
     const cookie = `${value}.${crypto.createHmac('sha256', 'test-secret').update(value).digest('base64url')}`;
-    return context.exports.handler({ Records: [{ cf: { request: { uri, method, querystring: '', headers: identity ? { cookie: [{ value: `psap_auth=${cookie}` }] } : {} } } }] });
+    return context.exports.handler({ Records: [{ cf: { request: { uri, method, querystring, headers: identity ? { cookie: [{ value: `psap_auth=${cookie}` }] } : {} } } }] });
   };
 }
+
+test('private V2 sign-in preserves query parameters and bare paths', async () => {
+  const f = fixture(), plan = await f.plan({ access: 'authenticated' });
+  const path = `/private/v2/${plan.id}/${plan.id}/site/index.html`;
+  for (const query of ['', 'view=latency&run=2']) {
+    const result = await gate(f)(path, 'GET', undefined, query);
+    assert.ok(result.body.includes('/_auth/github?state=' + encodeURIComponent(path + (query ? '?' + query : ''))));
+  }
+});
 
 test('viewer gate denies every partial-copy state and serves only committed manifest files', async () => {
   for (const access of ['public', 'authenticated']) {

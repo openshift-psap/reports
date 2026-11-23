@@ -34,6 +34,10 @@ With staging configured, unset/other modes fail closed rather than issuing old
 direct-to-final plans. The deployment script refuses to silently remove lifecycle
 configuration.
 
+On code redeploys, omitting `REPORT_UPLOAD_MODE` preserves the deployed value;
+new functions or configurations with no prior value default to `paused`. An
+explicit value overrides that default. Mode lookup failures stop deployment.
+
 CLI/MCP request and success formats remain compatible. PUT URLs last 15 minutes;
 retention and completion deadline last seven days from creation. Completion can
 succeed after PUT authorization expires if every file already exists. Missing or
@@ -111,6 +115,17 @@ between pages when runtime is low. It persists the next page only after processi
 the current one; crashes replay safely. Reserved concurrency is one, with additional
 conditional per-report leases. Full passes revisit tombstones to catch late PUTs
 and stale-worker copies without client cleanup or an operator.
+
+The worker initializes its checkpoint with a create-only conditional write before
+reading it, preserving an existing checkpoint on conflict. This avoids relying on
+missing-object GETs returning 404 under scoped listing permissions. Other errors,
+including permission denials, remain failures.
+
+Scans avoid control writes when no abort or cleanup is due and skip adopted
+legacy revisions with no managed upload data. Managed tombstones remain eligible
+for periodic sweeps: URL expiry plus an application lease is not proof that all
+in-flight storage writes have finished. Report listing reads at most ten control
+documents concurrently per page; it still scans the full collection.
 
 Cleanup deletes all versions/delete markers in exact managed prefixes, checks
 per-key errors, and verifies emptiness. Failures retain evidence and retry with

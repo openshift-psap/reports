@@ -50,7 +50,16 @@ aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name psap-reports-toke
 echo "=== Create or update Lambda ==="
 ENVIRONMENT="Variables={S3_BUCKET=$S3_BUCKET,S3_REGION=$S3_REGION,COOKIE_SECRET=$COOKIE_SECRET,CLOUDFRONT_DOMAIN=$CF_DOMAIN}"
 if [[ -n "${REPORT_STAGING_BUCKET:-}" ]]; then
-  : "${REPORT_UPLOAD_MODE:=paused}"
+  if [[ ! -v REPORT_UPLOAD_MODE ]]; then
+    if REPORT_UPLOAD_MODE=$(aws lambda get-function-configuration --function-name "$FUNCTION_NAME" --region "$REGION" --query 'Environment.Variables.REPORT_UPLOAD_MODE' --output text 2>"$WORK_DIR/mode-error"); then
+      case "$REPORT_UPLOAD_MODE" in None|null|'') REPORT_UPLOAD_MODE=paused ;; esac
+    elif grep -q 'ResourceNotFoundException' "$WORK_DIR/mode-error"; then
+      REPORT_UPLOAD_MODE=paused
+    else
+      echo "Could not read deployed upload mode; refusing to change it." >&2
+      exit 1
+    fi
+  fi
   [[ "$REPORT_UPLOAD_MODE" == paused || "$REPORT_UPLOAD_MODE" == v2 ]] || { echo "REPORT_UPLOAD_MODE must be paused or v2" >&2; exit 1; }
   ENVIRONMENT="Variables={S3_BUCKET=$S3_BUCKET,S3_REGION=$S3_REGION,COOKIE_SECRET=$COOKIE_SECRET,CLOUDFRONT_DOMAIN=$CF_DOMAIN,REPORT_STAGING_BUCKET=$REPORT_STAGING_BUCKET,REPORT_UPLOAD_MODE=$REPORT_UPLOAD_MODE}"
 elif aws lambda get-function-configuration --function-name "$FUNCTION_NAME" --region "$REGION" --query 'Environment.Variables.REPORT_STAGING_BUCKET' --output text 2>/dev/null | grep -qvE '^(None|null|)$'; then
