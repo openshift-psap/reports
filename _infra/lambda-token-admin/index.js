@@ -24,6 +24,32 @@ const UPLOAD_URL_TTL = 15 * 60;
 const BASE_KEY_PATTERN = /^(public|private)\/(benchmarks|ci|investigations|presentations)\/(\d{4}-\d{2}-\d{2})_([a-z0-9-]+)-([a-f0-9]+)$/;
 
 const s3 = new S3Client({ region: REGION });
+const lifecycle = () => process.env.REPORT_STAGING_BUCKET ? require('./publication-s3').publication() : null;
+
+async function managedEntry(id, access) {
+  const service = lifecycle();
+  if (!service) return null;
+  const reportId = await service.locate(id);
+  if (!reportId) return null;
+  const doc = (await service.read(reportId))?.value;
+  const revision = doc?.revisions[id];
+  if (!revision || !['COMMITTED', 'DELETING'].includes(revision.state) || revision.metadata.authenticated !== (access === 'authenticated')) {
+    const error = new Error('Report not found'); error.status = 404; throw error;
+  }
+  return { ...revision.metadata, isLatest: doc.head === id };
+}
+
+async function adoptEntry(entry, access, owner) {
+  if (!lifecycle() || await lifecycle().locate(entry.id)) return;
+  let prefix = null;
+  if (!entry.externalUrl) {
+    prefix = entry.baseKey ? reportBundlePrefix(entry, access, entry.id) : new URL(entry.path).pathname.replace(/^\//, '').replace(/\/[^/]+$/, '/');
+    if (!prefix || !prefix.startsWith(access === 'public' ? 'public/' : 'private/') || prefix.split('/').filter(Boolean).length < 3) {
+      const error = new Error('Invalid report storage path'); error.status = 400; throw error;
+    }
+  }
+  await lifecycle().adopt(entry, owner, prefix);
+}
 
 function tokenDigest(token) {
   return `sha256:${crypto.createHash('sha256').update(token).digest('hex')}`;
@@ -161,7 +187,7 @@ async function putJson(key, value) {
   }));
 }
 
-async function listReports(access, includeSuperseded = false) {
+async function listLegacyReports(access, includeSuperseded = false) {
   const prefix = `report-meta/${access}/`;
   let continuationToken;
   const entries = [];
@@ -177,6 +203,14 @@ async function listReports(access, includeSuperseded = false) {
   entries.forEach(entry => { const id = entry.reportId || entry.id; counts.set(id, (counts.get(id) || 0) + 1); });
   return entries.filter(entry => includeSuperseded || entry.isLatest !== false)
     .map(entry => ({ ...entry, reportId: entry.reportId || entry.id, version: entry.version || 1, versionCount: counts.get(entry.reportId || entry.id) || 1 }))
+    .sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
+}
+
+async function listReports(access, includeSuperseded = false) {
+  const legacy = await listLegacyReports(access, includeSuperseded);
+  if (!lifecycle()) return legacy;
+  const current = await lifecycle().listReports(access, includeSuperseded);
+  return [...legacy.filter(entry => !current.migrated.has(entry.id)), ...current.reports]
     .sort((a, b) => String(b.submittedAt || b.date).localeCompare(String(a.submittedAt || a.date)));
 }
 
@@ -310,7 +344,7 @@ function validateSubmission(body) {
   };
 }
 
-exports.handler = async (event) => {
+async function handle(event) {
   const origin = event.headers && event.headers.origin;
 
   if (event.httpMethod === 'OPTIONS') {
@@ -320,6 +354,7 @@ exports.handler = async (event) => {
   const method = event.httpMethod;
   const path = event.path || event.resource || '';
   const isReportsPath = path.endsWith('/reports');
+  const isUploadsPath = path.endsWith('/uploads');
   const reportMatch = path.match(/\/reports\/([a-f0-9-]+)\/complete$/);
   const requestHeaders = event.headers || {};
   const cookies = parseCookies(requestHeaders.cookie || requestHeaders.Cookie);
@@ -334,12 +369,35 @@ exports.handler = async (event) => {
     return response(200, { reports }, origin);
   }
 
-  if (!authenticated && (isReportsPath || reportMatch)) authenticated = await cliPrincipal(requestHeaders);
+  if (!authenticated && (isReportsPath || reportMatch || isUploadsPath)) authenticated = await cliPrincipal(requestHeaders);
   if (!authenticated) {
     return response(401, { error: 'Not authenticated' }, origin);
   }
 
   const isTokensPath = path.endsWith('/tokens');
+
+  if (method === 'GET' && isUploadsPath) {
+    if (!authenticated.githubHandle) return response(403, { error: 'GitHub uploader sign-in required' }, origin);
+    if (!lifecycle()) return response(200, { uploads: [], cursor: null, enabled: false }, origin);
+    const query = event.queryStringParameters || {};
+    let cursor;
+    if (query.cursor) {
+      try {
+        const [payload, signature] = query.cursor.split('.');
+        const expected = crypto.createHmac('sha256', COOKIE_SECRET).update(payload).digest('base64url');
+        if (signature !== expected) throw new Error();
+        const value = JSON.parse(Buffer.from(payload, 'base64url').toString());
+        if (value.owner !== authenticated.githubHandle.toLowerCase() || Date.now() > value.expires) throw new Error();
+        cursor = value.cursor;
+      } catch (_) { return response(400, { error: 'Invalid or expired page cursor; refresh the upload list' }, origin); }
+    }
+    const result = await lifecycle().dashboard(authenticated.githubHandle, cursor, query.id);
+    if (result.cursor) {
+      const payload = Buffer.from(JSON.stringify({ owner: authenticated.githubHandle.toLowerCase(), cursor: result.cursor, expires: Date.now() + 3600000 })).toString('base64url');
+      result.cursor = `${payload}.${crypto.createHmac('sha256', COOKIE_SECRET).update(payload).digest('base64url')}`;
+    }
+    return response(200, { ...result, enabled: true }, origin);
+  }
 
   // Session identity is separate from token administration for read-only users.
   if (method === 'GET' && path.endsWith('/session')) {
@@ -367,13 +425,17 @@ exports.handler = async (event) => {
     }
     const submission = validateSubmission(parseBody(event.body));
     if (submission.error) return response(400, { error: submission.error }, origin);
+    if (lifecycle() && process.env.REPORT_UPLOAD_MODE !== 'v2') return response(503, { error: 'New uploads are paused for publication rollout' }, origin);
     const parentId = safeString(parseBody(event.body).parentId, 64);
     let parent;
     if (parentId) {
-      try { parent = await getJson(`report-meta/${submission.access}/${parentId}.json`); } catch (e) { return response(404, { error: 'Current report not found' }, origin); }
+      parent = await managedEntry(parentId, submission.access);
+      if (!parent) try { parent = await getJson(`report-meta/${submission.access}/${parentId}.json`); } catch (e) { return response(404, { error: 'Current report not found' }, origin); }
       if (String(parent.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may update only your own reports' }, origin);
       if (parent.isLatest === false) return response(409, { error: 'This is no longer the current revision' }, origin);
+      await adoptEntry(parent, submission.access, authenticated.githubHandle);
     }
+    if (lifecycle()) return response(201, await lifecycle().plan(submission, authenticated.githubHandle, parentId), origin);
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     submission.date = createdAt.slice(0, 10);
@@ -408,6 +470,8 @@ exports.handler = async (event) => {
   // POST /reports/<id>/complete — only publish metadata after index.html exists.
   if (method === 'POST' && reportMatch) {
     const id = reportMatch[1];
+    if (lifecycle() && await lifecycle().locate(id)) return response(201, { report: await lifecycle().complete(id, authenticated.githubHandle) }, origin);
+    if (lifecycle()) return response(410, { error: 'Legacy upload plan retired; start a new upload' }, origin);
     let pending;
     try { pending = await getJson(`report-submissions/${id}.json`); }
     catch (error) { return response(404, { error: 'Upload plan not found or already completed' }, origin); }
@@ -438,8 +502,14 @@ exports.handler = async (event) => {
     if (!REPORT_ACCESS.has(access) || !/^(legacy-)?[a-f0-9-]+$/.test(id)) return response(400, { error: 'Invalid report identifier' }, origin);
     if (!authenticated.githubHandle) return response(403, { error: 'GitHub sign-in required' }, origin);
     let entry;
-    try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
+    entry = await managedEntry(id, access);
+    if (!entry) try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
     if (String(entry.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may delete only your own reports' }, origin);
+    if (lifecycle()) {
+      await adoptEntry(entry, access, authenticated.githubHandle);
+      await lifecycle().remove(id, authenticated.githubHandle, access);
+      return response(200, { deleted: id }, origin);
+    }
     let prefix;
     if (entry.externalUrl) {
       prefix = null;
@@ -478,9 +548,11 @@ exports.handler = async (event) => {
     if (!REPORT_ACCESS.has(access) || !/^(legacy-)?[a-f0-9-]+$/.test(id)) return response(400, { error: 'Invalid report identifier' }, origin);
     if (!authenticated.githubHandle) return response(403, { error: 'GitHub sign-in required' }, origin);
     let entry;
-    try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
+    entry = await managedEntry(id, access);
+    if (!entry) try { entry = await getJson(`report-meta/${access}/${id}.json`); } catch (e) { return response(404, { error: 'Report not found' }, origin); }
     if (String(entry.author).toLowerCase() !== authenticated.githubHandle.toLowerCase()) return response(403, { error: 'You may update only your own reports' }, origin);
     const body = parseBody(event.body);
+    if (lifecycle()) await adoptEntry(entry, access, authenticated.githubHandle);
     if (body.action === 'metadata') {
       if (entry.isLatest === false) return response(409, { error: 'This is no longer the current revision' }, origin);
       const allowed = new Set(['action', 'title', 'description', 'category', 'tags']);
@@ -500,6 +572,11 @@ exports.handler = async (event) => {
       entry.archivedAt = new Date().toISOString();
     } else {
       return response(400, { error: 'Unsupported report update action' }, origin);
+    }
+    if (lifecycle()) {
+      const changes = body.action === 'metadata' ? { title: entry.title, category: entry.category, description: entry.description, tags: entry.tags, updatedAt: entry.updatedAt }
+        : { status: entry.status, archivedAt: entry.archivedAt };
+      return response(200, { report: await lifecycle().edit(id, authenticated.githubHandle, access, changes) }, origin);
     }
     await putJson(`report-meta/${access}/${id}.json`, entry);
     return response(200, { report: entry }, origin);
@@ -566,4 +643,12 @@ exports.handler = async (event) => {
   }
 
   return response(404, { error: 'Not found' }, origin);
+};
+
+exports.handler = async event => {
+  try { return await handle(event); }
+  catch (error) {
+    console.log(JSON.stringify({ event: 'report_api_failed', status: error.status || 502 }));
+    return response(error.status || 502, { error: error.status ? error.message : 'Storage operation could not be confirmed. Refresh the hub and retry; incomplete uploads remain private.' }, event.headers?.origin);
+  }
 };

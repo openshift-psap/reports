@@ -217,6 +217,18 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
         <span id="report-upload-status" style="font-size:0.8rem;color:var(--text-secondary)" role="status"></span>
       </div>
     </form>
+    <section id="incomplete-uploads" hidden style="margin:1.5rem 0">
+      <h2>Incomplete uploads</h2>
+      <p>Only your uploads are shown. Incomplete files stay private for seven days. Upload links expire sooner; finalized reports do not expire.</p>
+      <button type="button" onclick="loadIncompleteUploads(false)">Refresh uploads</button>
+      <label>Status <select id="upload-state-filter" onchange="renderIncompleteUploads()">
+        <option value="">All loaded uploads</option><option value="OPEN">Awaiting files</option>
+        <option value="PREPARING">Preparing</option><option value="ABORTED">Failed / cleanup pending</option>
+      </select></label>
+      <p id="upload-list-status" role="status" aria-live="polite">Refresh to load your incomplete uploads.</p>
+      <div id="upload-list"></div>
+      <button id="upload-list-more" type="button" hidden onclick="loadIncompleteUploads(true)">Load next page</button>
+    </section>
     <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem">Access Token Admin</h2>
     <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
       <input type="text" id="token-group" class="search-box" placeholder="Group (e.g. sales, engineering)" style="width:200px;font-size:0.8rem;padding:0.4rem 0.6rem">
@@ -600,6 +612,72 @@ async function archiveReport(id, access, title) {
   rebuildFilters(); render();
 }
 
+let incompleteUploads = [];
+let incompleteCursor = null;
+let incompleteLoading = false;
+
+async function loadIncompleteUploads(more = false) {
+  if (incompleteLoading || !currentGithubHandle) return;
+  incompleteLoading = true;
+  const status = document.getElementById("upload-list-status");
+  status.textContent = "Loading uploads…";
+  try {
+    const suffix = more && incompleteCursor ? `?cursor=${encodeURIComponent(incompleteCursor)}` : "";
+    const response = await fetch(`${TOKEN_API}/uploads${suffix}`, { credentials: "include" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not load uploads");
+    incompleteUploads = more ? [...incompleteUploads, ...data.uploads] : data.uploads;
+    incompleteCursor = data.cursor;
+    renderIncompleteUploads();
+    document.getElementById("upload-list-more").hidden = !incompleteCursor;
+    status.textContent = data.enabled === false ? "The new upload lifecycle is not enabled yet." :
+      `${incompleteUploads.length} uploads loaded.${incompleteCursor ? " More pages are available, including when this page has no matches." : ""}`;
+  } catch (error) { status.textContent = `${error.message}. Your previous results are retained; refresh to retry.`; }
+  finally { incompleteLoading = false; }
+}
+
+function renderIncompleteUploads() {
+  const list = document.getElementById("upload-list");
+  list.textContent = "";
+  const selected = document.getElementById("upload-state-filter").value;
+  for (const upload of incompleteUploads) {
+    if (selected && upload.state !== selected) continue;
+    const card = document.createElement("article");
+    card.style.cssText = "border:1px solid var(--border);padding:1rem;margin:0.75rem 0";
+    const title = document.createElement("h3"); title.textContent = upload.title; card.appendChild(title);
+    const info = document.createElement("p");
+    const deadline = new Date(upload.retainUntil);
+    const left = Math.max(0, Math.ceil((upload.retainUntil - Date.now()) / 3600000));
+    info.textContent = `${upload.id} · ${upload.access} · ${upload.category} · ${upload.state}. Entry: ${upload.entryFile || "external link"}. Created: ${new Date(upload.createdAt).toLocaleString()}. Retained until ${deadline.toLocaleString()} (${left} hours remaining). Upload URLs ${Date.now() >= upload.uploadUrlsExpireAt ? "expired" : "expire"} at ${new Date(upload.uploadUrlsExpireAt).toLocaleString()}.`;
+    card.appendChild(info);
+    const progress = document.createElement("p");
+    progress.textContent = `Expected: ${upload.expectedFiles} files / ${upload.expectedBytes} bytes. Observed: ${upload.observedFiles === null ? "Unknown — inspect to refresh" : `${upload.observedFiles} files / ${upload.observedBytes} bytes`}.`;
+    card.appendChild(progress);
+    const detail = document.createElement("p");
+    detail.textContent = `Failure: ${upload.failure || "none recorded"}. ${upload.cleanup ? `Cleanup failures: ${upload.cleanup.failures}; next check ${new Date(upload.cleanup.nextRetryAt).toLocaleString()}; last verified ${upload.cleanup.verifiedAt ? new Date(upload.cleanup.verifiedAt).toLocaleString() : "not yet"}.` : "Cleanup has not yet been verified."} Missing: ${upload.missing === null ? "Unknown" : upload.missing.join(", ") || "none"}. Mismatched: ${upload.mismatched === null ? "Unknown" : upload.mismatched.join(", ") || "none"}.`;
+    card.appendChild(detail);
+    const inspect = document.createElement("button"); inspect.type = "button"; inspect.textContent = "Inspect file progress";
+    inspect.addEventListener("click", async () => {
+      inspect.disabled = true;
+      try {
+        const response = await fetch(`${TOKEN_API}/uploads?id=${encodeURIComponent(upload.id)}`, { credentials: "include" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not inspect upload");
+        const found = data.uploads.find(item => item.id === upload.id);
+        if (found) Object.assign(upload, found);
+        else incompleteUploads = incompleteUploads.filter(item => item.id !== upload.id);
+        renderIncompleteUploads();
+      } catch (error) { detail.textContent = `Progress unavailable: ${error.message}. Retry inspection.`; inspect.disabled = false; }
+    });
+    card.appendChild(inspect);
+    if (upload.previousPath && upload.previousPath.startsWith("https://")) {
+      const previous = document.createElement("a"); previous.href = upload.previousPath; previous.textContent = " Previous committed revision"; card.appendChild(previous);
+    }
+    const help = document.createElement("p"); help.textContent = "Expired upload URLs or failed validation require a fresh upload. Retention does not renew URLs or make uploads resumable."; card.appendChild(help);
+    list.appendChild(card);
+  }
+}
+
 async function initAdmin() {
   const panel = document.getElementById("admin-panel");
   if (!TOKEN_API) {
@@ -637,6 +715,7 @@ async function initAdmin() {
     submitter.value = data.githubHandle || "";
     submitter.placeholder = data.githubHandle ? "" : "GitHub sign-in required to submit";
     document.getElementById("report-upload-form").hidden = !data.githubHandle;
+    document.getElementById("incomplete-uploads").hidden = !data.githubHandle;
     document.getElementById("report-oauth-required").hidden = !!data.githubHandle;
     const tokenResp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
     if (tokenResp.ok) renderTokenTable((await tokenResp.json()).tokens);

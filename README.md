@@ -4,6 +4,11 @@ Report hub and report bundles are served from private S3 through CloudFront. Git
 
 See [Using the PSAP Report Hub](USING_THE_REPORT_HUB.md) for browsing, sign-in, token management, and report publishing instructions. For command-line uploads, including authentication, limits, and automation constraints, see the [CLI guide](CLI.md).
 
+Opt-in publication V2 adds atomic bundle publication, seven-day incomplete-upload
+retention with automatic cleanup, and an owner-only dashboard. See the
+[rollout and recovery guide](_infra/REPORT_PUBLICATION_ROLLOUT.md) for enablement
+and live-validation requirements; repository support does not imply deployment.
+
 Agent clients can optionally use the [local stdio MCP uploader](MCP.md), which shares the CLI's upload and authentication implementation.
 
 ## How it works
@@ -15,7 +20,7 @@ Agent clients can optionally use the [local stdio MCP uploader](MCP.md), which s
 
 ## Adding a report
 
-Sign in at the CloudFront hub and use **Submit a report** to upload one self-contained HTML file; any HTML filename is accepted. For a report with relative assets or multiple files, use the [CLI uploader](CLI.md), which preserves directory-relative paths, including a nested entry page. The browser or CLI receives short-lived, prefix-scoped S3 upload URLs; files go directly to S3 and metadata is published only after the designated entry file is present.
+Sign in at the CloudFront hub and use **Submit a report** to upload one self-contained HTML file; any HTML filename is accepted. For a report with relative assets or multiple files, use the [CLI uploader](CLI.md), which preserves directory-relative paths, including a nested entry page. The browser or CLI receives short-lived, prefix-scoped S3 upload URLs. Legacy publication checks the designated entry file; when V2 is enabled, files go to private staging and every file is verified before atomic publication.
 
 Do not commit report HTML, assets, or private report metadata to this repository.
 
@@ -57,7 +62,7 @@ The full report index is baked into `index.html` as a JSON array. All filtering,
 
 ### Upload model: authenticated direct-to-S3
 
-Every submission uses a unique object prefix: `public/<category>/...` or `private/<category>/...`. The upload plan is valid for 15 minutes, allows at most 100 files and 100 MB total, and requires a designated HTML entry file that must be one of the uploaded files. The browser accepts one HTML file; the CLI preserves a nested entry and every relative asset path. A separate metadata object is written only after the report is complete. Owners can delete their own reports in the hub; see [Delete a report](USING_THE_REPORT_HUB.md#delete-a-report) for which files are removed. Archiving keeps the files.
+Legacy submissions use unique `public/<category>/...` or `private/<category>/...` object prefixes. V2 uses private staging and gated `/public/v2/...` or `/private/v2/...` viewer paths backed by a conditional S3 control document. Upload URLs are valid for 15 minutes; the existing API allows at most 100 files and 100 MiB total and requires a designated HTML entry file among them. The browser accepts one HTML file; the CLI preserves nested entry and asset paths. V2 incomplete uploads are retained for seven days and then cleaned up automatically; finalized reports have no automatic expiry. Owners can delete their reports in the hub; see [Delete a report](USING_THE_REPORT_HUB.md#delete-a-report). Archiving keeps the files.
 
 ### Report format: HTML only
 

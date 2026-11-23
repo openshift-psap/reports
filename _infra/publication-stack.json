@@ -1,0 +1,86 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Opt-in S3 report staging and reconciliation. Deploy edge gate before enabling v2 issuance. No historical cleanup.",
+  "Parameters": {
+    "ReportBucket": {"Type": "String"},
+    "ApiRoleName": {"Type": "String"},
+    "EdgeRoleName": {"Type": "String"},
+    "ArtifactBucket": {"Type": "String"},
+    "ArtifactKey": {"Type": "String", "Description": "ZIP containing reconcile.js, publication.js, publication-s3.js and node_modules"},
+    "ReportDomain": {"Type": "String"},
+    "CleanupEnabled": {"Type": "String", "Default": "false", "AllowedValues": ["true", "false"]}
+  },
+  "Conditions": {"RunCleanup": {"Fn::Equals": [{"Ref": "CleanupEnabled"}, "true"]}},
+  "Resources": {
+    "Staging": {
+      "Type": "AWS::S3::Bucket", "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "VersioningConfiguration": {"Status": "Enabled"},
+        "OwnershipControls": {"Rules": [{"ObjectOwnership": "BucketOwnerEnforced"}]},
+        "PublicAccessBlockConfiguration": {"BlockPublicAcls": true, "BlockPublicPolicy": true, "IgnorePublicAcls": true, "RestrictPublicBuckets": true},
+        "BucketEncryption": {"ServerSideEncryptionConfiguration": [{"ServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]},
+        "CorsConfiguration": {"CorsRules": [{"AllowedOrigins": [{"Fn::Sub": "https://${ReportDomain}"}], "AllowedMethods": ["PUT"], "AllowedHeaders": ["content-type", "cache-control"], "ExposedHeaders": ["ETag", "x-amz-version-id"], "MaxAge": 900}]},
+        "LifecycleConfiguration": {"Rules": [
+          {"Id": "staging-expiration", "Status": "Enabled", "Prefix": "uploads/", "ExpirationInDays": 7, "NoncurrentVersionExpiration": {"NoncurrentDays": 7}, "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}},
+          {"Id": "expired-markers", "Status": "Enabled", "Prefix": "uploads/", "ExpiredObjectDeleteMarker": true}
+        ]}
+      }
+    },
+    "StagingPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {"Bucket": {"Ref": "Staging"}, "PolicyDocument": {"Version": "2012-10-17", "Statement": [
+        {"Effect": "Deny", "Principal": "*", "Action": "s3:*", "Resource": [{"Fn::GetAtt": ["Staging", "Arn"]}, {"Fn::Sub": "${Staging.Arn}/*"}], "Condition": {"Bool": {"aws:SecureTransport": "false"}}},
+        {"Effect": "Deny", "Principal": {"Service": "cloudfront.amazonaws.com"}, "Action": ["s3:GetObject", "s3:GetObjectVersion"], "Resource": {"Fn::Sub": "${Staging.Arn}/*"}}
+      ]}}
+    },
+    "ApiPublicationPolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {"PolicyName": "report-publication-v2", "Roles": [{"Ref": "ApiRoleName"}], "PolicyDocument": {"Version": "2012-10-17", "Statement": [
+        {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": [{"Fn::Sub": "arn:${AWS::Partition}:s3:::${ReportBucket}/report-control-v2/*"}, {"Fn::Sub": "arn:${AWS::Partition}:s3:::${ReportBucket}/report-locators-v2/*"}]},
+        {"Effect": "Allow", "Action": ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"], "Resource": [{"Fn::Sub": "arn:${AWS::Partition}:s3:::${ReportBucket}/report-objects-v2/*"}]},
+        {"Effect": "Allow", "Action": ["s3:DeleteObjectVersion"], "Resource": [{"Fn::Sub": "arn:${AWS::Partition}:s3:::${ReportBucket}/public/*"}, {"Fn::Sub": "arn:${AWS::Partition}:s3:::${ReportBucket}/private/*"}]},
+        {"Effect": "Allow", "Action": ["s3:ListBucket", "s3:ListBucketVersions"], "Resource": {"Fn::Sub": "arn:${AWS::Partition}:s3:::${ReportBucket}"}, "Condition": {"StringLike": {"s3:prefix": ["report-control-v2/*", "report-objects-v2/*", "public/*", "private/*"]}}},
+        {"Effect": "Allow", "Action": ["s3:GetBucketVersioning"], "Resource": {"Fn::GetAtt": ["Staging", "Arn"]}},
+        {"Effect": "Allow", "Action": ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject"], "Resource": {"Fn::Sub": "${Staging.Arn}/uploads/*"}}
+      ]}}
+    },
+    "EdgePublicationPolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {"PolicyName": "report-publication-v2-read", "Roles": [{"Ref": "EdgeRoleName"}], "PolicyDocument": {"Version": "2012-10-17", "Statement": [
+        {"Effect": "Allow", "Action": "s3:GetObject", "Resource": {"Fn::Sub": "arn:${AWS::Partition}:s3:::${ReportBucket}/report-control-v2/*"}}
+      ]}}
+    },
+    "WorkerRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]},
+        "ManagedPolicyArns": [{"Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"}],
+        "Policies": [{"PolicyName": "managed-upload-cleanup", "PolicyDocument": {"Version": "2012-10-17", "Statement": [
+          {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": [{"Fn::Sub": "arn:${AWS::Partition}:s3:::${ReportBucket}/report-control-v2/*"}, {"Fn::Sub": "arn:${AWS::Partition}:s3:::${ReportBucket}/report-reconciliation-v2/*"}]},
+          {"Effect": "Allow", "Action": ["s3:ListBucket", "s3:ListBucketVersions"], "Resource": {"Fn::Sub": "arn:${AWS::Partition}:s3:::${ReportBucket}"}, "Condition": {"StringLike": {"s3:prefix": ["report-control-v2/*", "report-objects-v2/*"]}}},
+          {"Effect": "Allow", "Action": ["s3:DeleteObject", "s3:DeleteObjectVersion"], "Resource": {"Fn::Sub": "arn:${AWS::Partition}:s3:::${ReportBucket}/report-objects-v2/*"}},
+          {"Effect": "Allow", "Action": ["s3:ListBucketVersions"], "Resource": {"Fn::GetAtt": ["Staging", "Arn"]}, "Condition": {"StringLike": {"s3:prefix": ["uploads/*"]}}},
+          {"Effect": "Allow", "Action": ["s3:DeleteObject", "s3:DeleteObjectVersion"], "Resource": {"Fn::Sub": "${Staging.Arn}/uploads/*"}}
+        ]}}]
+      }
+    },
+    "Worker": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {"Runtime": "nodejs22.x", "Handler": "reconcile.handler", "Role": {"Fn::GetAtt": ["WorkerRole", "Arn"]}, "Timeout": 900, "MemorySize": 512, "ReservedConcurrentExecutions": 1,
+        "Code": {"S3Bucket": {"Ref": "ArtifactBucket"}, "S3Key": {"Ref": "ArtifactKey"}},
+        "Environment": {"Variables": {"S3_BUCKET": {"Ref": "ReportBucket"}, "S3_REGION": {"Ref": "AWS::Region"}, "REPORT_STAGING_BUCKET": {"Ref": "Staging"}, "CLOUDFRONT_DOMAIN": {"Ref": "ReportDomain"}}}}
+    },
+    "WorkerLogs": {"Type": "AWS::Logs::LogGroup", "Properties": {"LogGroupName": {"Fn::Sub": "/aws/lambda/${Worker}"}, "RetentionInDays": 30}},
+    "Schedule": {"Type": "AWS::Events::Rule", "Properties": {"ScheduleExpression": "rate(5 minutes)", "State": {"Fn::If": ["RunCleanup", "ENABLED", "DISABLED"]}, "Targets": [{"Id": "cleanup", "Arn": {"Fn::GetAtt": ["Worker", "Arn"]}}]}},
+    "InvokeWorker": {"Type": "AWS::Lambda::Permission", "Properties": {"FunctionName": {"Ref": "Worker"}, "Action": "lambda:InvokeFunction", "Principal": "events.amazonaws.com", "SourceArn": {"Fn::GetAtt": ["Schedule", "Arn"]}}},
+    "CleanupFailures": {"Type": "AWS::Logs::MetricFilter", "Properties": {"LogGroupName": {"Ref": "WorkerLogs"}, "FilterPattern": "{ $.event = \"upload_cleanup_failed\" || $.event = \"upload_reconciliation_failed\" }", "MetricTransformations": [{"MetricNamespace": "PSAP/Publication", "MetricName": "CleanupFailures", "MetricValue": "1", "DefaultValue": 0}]}},
+    "CleanupAlarm": {"Type": "AWS::CloudWatch::Alarm", "Properties": {"AlarmDescription": "Investigate retained cleanup backlog; do not delete control records", "Namespace": "PSAP/Publication", "MetricName": "CleanupFailures", "Statistic": "Sum", "Period": 300, "EvaluationPeriods": 1, "Threshold": 0, "ComparisonOperator": "GreaterThanThreshold", "TreatMissingData": "notBreaching"}},
+    "Heartbeat": {"Type": "AWS::Logs::MetricFilter", "Properties": {"LogGroupName": {"Ref": "WorkerLogs"}, "FilterPattern": "{ $.event = \"reconciliation_heartbeat\" }", "MetricTransformations": [{"MetricNamespace": "PSAP/Publication", "MetricName": "ReconciliationHeartbeat", "MetricValue": "1"}]}},
+    "HeartbeatAlarm": {"Type": "AWS::CloudWatch::Alarm", "Properties": {"AlarmDescription": "Cleanup worker has not completed an invocation in 30 minutes", "Namespace": "PSAP/Publication", "MetricName": "ReconciliationHeartbeat", "Statistic": "Sum", "Period": 1800, "EvaluationPeriods": 1, "Threshold": 1, "ComparisonOperator": "LessThanThreshold", "TreatMissingData": "breaching"}},
+    "ScanAge": {"Type": "AWS::Logs::MetricFilter", "Properties": {"LogGroupName": {"Ref": "WorkerLogs"}, "FilterPattern": "{ $.event = \"reconciliation_heartbeat\" }", "MetricTransformations": [{"MetricNamespace": "PSAP/Publication", "MetricName": "FullScanAgeSeconds", "MetricValue": "$.fullScanAgeSeconds"}]}},
+    "ScanAgeAlarm": {"Type": "AWS::CloudWatch::Alarm", "Properties": {"AlarmDescription": "Managed upload scan has not completed in a day", "Namespace": "PSAP/Publication", "MetricName": "FullScanAgeSeconds", "Statistic": "Maximum", "Period": 300, "EvaluationPeriods": 1, "Threshold": 86400, "ComparisonOperator": "GreaterThanThreshold", "TreatMissingData": "breaching"}},
+    "BacklogAge": {"Type": "AWS::Logs::MetricFilter", "Properties": {"LogGroupName": {"Ref": "WorkerLogs"}, "FilterPattern": "{ $.event = \"upload_lifecycle_observed\" }", "MetricTransformations": [{"MetricNamespace": "PSAP/Publication", "MetricName": "OldestCleanupDueSeconds", "MetricValue": "$.oldestCleanupDueSeconds"}]}},
+    "BacklogAlarm": {"Type": "AWS::CloudWatch::Alarm", "Properties": {"AlarmDescription": "Incomplete-upload cleanup is over 30 minutes overdue", "Namespace": "PSAP/Publication", "MetricName": "OldestCleanupDueSeconds", "Statistic": "Maximum", "Period": 300, "EvaluationPeriods": 1, "Threshold": 1800, "ComparisonOperator": "GreaterThanThreshold", "TreatMissingData": "notBreaching"}}
+  },
+  "Outputs": {"StagingBucket": {"Value": {"Ref": "Staging"}}, "CleanupFunction": {"Value": {"Ref": "Worker"}}}
+}
