@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 const source = fs.readFileSync('_infra/lambda-token-admin/index.js', 'utf8');
 const id = '12345678-1234-1234-1234-123456789abc';
 
-function setup(overrides = {}, { reportId = id, listings = {}, onSend = () => undefined } = {}) {
+function setup(overrides = {}, { reportId = id, listings = {}, onSend = () => undefined, publication = null, uploadMode = 'v2' } = {}) {
   const original = {
     id: reportId, reportId, title: 'Old title', description: 'Old description', category: 'ci',
     tags: ['gpu'], author: 'Owner', version: 2, isLatest: true, status: 'final',
@@ -48,20 +48,21 @@ function setup(overrides = {}, { reportId = id, listings = {}, onSend = () => un
     }
   };
   const context = {
-    exports: {}, process: { env: { COOKIE_SECRET: 'test-secret', CLOUDFRONT_DOMAIN: 'reports.example' } }, console, URL,
+    exports: {}, process: { env: { COOKIE_SECRET: 'test-secret', CLOUDFRONT_DOMAIN: 'reports.example', ...(publication ? { REPORT_STAGING_BUCKET: 'staging', REPORT_UPLOAD_MODE: uploadMode } : {}) } }, console, URL, Buffer,
     require(name) {
       if (name === '@aws-sdk/client-s3') return commands;
       if (name === '@aws-sdk/s3-request-presigner') return { getSignedUrl: async () => 'https://upload.example/' };
+      if (name === './publication-s3') return { publication: () => publication };
       return require(name);
     },
   };
   vm.runInNewContext(source, context);
-  async function request(body, { handle = 'owner', method = 'PATCH', access = 'authenticated', reportId: requestedId = reportId } = {}) {
+  async function request(body, { handle = 'owner', method = 'PATCH', access = 'authenticated', reportId: requestedId = reportId, path = '/reports', query = {} } = {}) {
     const value = `authenticated:github:${Date.now()}:${handle}`;
     const signature = crypto.createHmac('sha256', 'test-secret').update(value).digest('base64url');
     const result = await context.exports.handler({
-      httpMethod: method, path: '/reports', headers: { cookie: `psap_auth=${value}.${signature}` },
-      queryStringParameters: { access, id: requestedId }, body: body === undefined ? undefined : JSON.stringify(body),
+      httpMethod: method, path, headers: { cookie: `psap_auth=${value}.${signature}` },
+      queryStringParameters: { access, id: requestedId, ...query }, body: body === undefined ? undefined : JSON.stringify(body),
     });
     return { ...result, data: result.body ? JSON.parse(result.body) : null };
   }
@@ -88,6 +89,25 @@ function setup(overrides = {}, { reportId = id, listings = {}, onSend = () => un
 }
 
 const metadata = { action: 'metadata', title: 'New title', category: 'benchmarks', description: 'Updated', tags: ['rhoai', 'gpu'] };
+
+test('adopting and replacing legacy current revision preserves deduplicated history counts', async () => {
+  const f = require('./helpers/publication-fixture').fixture();
+  const api = setup({}, { publication: f.service });
+  const oldId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  api.objects.set(`report-meta/authenticated/${oldId}.json`, { ...api.original, id: oldId, version: 1, isLatest: false });
+  assert.equal((await api.request(metadata)).statusCode, 200);
+  let listing = await api.request(undefined, { method: 'GET' });
+  assert.equal(listing.data.reports.length, 1);
+  assert.equal(listing.data.reports[0].versionCount, 2);
+  const plan = await api.upload({ ...f.submission, access: 'authenticated', parentId: id });
+  f.fill(plan.data.id);
+  assert.equal((await api.complete(plan.data.id)).statusCode, 201);
+  listing = await api.request(undefined, { method: 'GET' });
+  assert.equal(listing.data.reports[0].versionCount, 3);
+  await f.service.remove(id, 'owner', 'authenticated');
+  listing = await api.request(undefined, { method: 'GET' });
+  assert.equal(listing.data.reports[0].versionCount, 2, 'deleted managed revision is not resurrected from legacy metadata');
+});
 
 test('metadata edits change only info; no file operations or new revision', async () => {
   const { request, original, calls } = setup();
@@ -517,4 +537,61 @@ test('already-empty bundles are verified and external entries only delete metada
     assert.deepEqual(external.calls.map(call => call.name), ['GetObjectCommand', 'DeleteObjectCommand']);
     assert.equal(external.objects.has(`report-meta/authenticated/${id}.json`), fail);
   }
+});
+
+test('v2 API integrates plan, owner completion, listing, edits and deletion without final-prefix signed URLs', async () => {
+  const f = require('./helpers/publication-fixture').fixture();
+  const api = setup({}, { publication: f.service });
+  const plan = await api.upload(f.submission);
+  assert.equal(plan.statusCode, 201);
+  assert.ok(plan.data.uploads.every(item => item.url.startsWith('https://private-staging.example/')));
+  f.fill(plan.data.id);
+  assert.equal((await api.complete(plan.data.id, { handle: 'other' })).statusCode, 403);
+  const result = await api.complete(plan.data.id);
+  assert.equal(result.statusCode, 201);
+  assert.match(result.data.report.path, /\/public\/v2\//);
+  assert.deepEqual((await api.complete(plan.data.id)).data, result.data);
+  const list = await api.request(undefined, { method: 'GET', access: 'public' });
+  assert.equal(list.data.reports[0].id, plan.data.id);
+  assert.equal((await api.request(metadata, { access: 'public', reportId: plan.data.id })).statusCode, 200);
+  assert.equal((await api.request(undefined, { method: 'DELETE', access: 'public', reportId: plan.data.id })).statusCode, 200);
+  assert.equal((await api.request(undefined, { method: 'GET', access: 'public' })).data.reports.length, 0);
+});
+
+test('v2 dashboard authorization and owner-bound pagination do not leak other owners', async () => {
+  const f = require('./helpers/publication-fixture').fixture();
+  const plan = await f.plan();
+  const list = f.store.list;
+  f.store.list = async () => ({ ...await list(), cursor: 'internal-s3-token' });
+  const api = setup({}, { publication: f.service });
+  const options = { method: 'GET', path: '/uploads', query: { id: undefined } };
+  const first = await api.request(undefined, options);
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.data.uploads[0].id, plan.id);
+  assert.doesNotMatch(first.data.cursor, /internal-s3-token/);
+  assert.equal((await api.request(undefined, { ...options, handle: 'other', query: { cursor: first.data.cursor } })).statusCode, 400);
+  assert.equal((await api.request(undefined, { ...options, handle: '' })).statusCode, 403);
+  assert.equal((await api.request(undefined, { ...options, handle: 'other' })).data.uploads.length, 0);
+  assert.equal((await api.request(undefined, { ...options, query: { id: plan.id } })).data.uploads[0].missing.length, 2);
+});
+
+test('paused v2 issuance never silently falls back to old direct-to-final plans', async () => {
+  const f = require('./helpers/publication-fixture').fixture();
+  const api = setup({}, { publication: f.service, uploadMode: 'paused' });
+  assert.equal((await api.upload(f.submission)).statusCode, 503);
+  assert.equal(api.calls.some(call => call.name === 'PutObjectCommand'), false);
+  assert.equal((await api.complete(id)).statusCode, 410);
+});
+
+test('legacy replacement is adopted before v2 publication and its old listing is deduplicated', async () => {
+  const f = require('./helpers/publication-fixture').fixture();
+  const api = setup({ baseKey: bundleKey }, { publication: f.service });
+  const plan = await api.upload({ ...f.submission, access: 'authenticated', parentId: id });
+  assert.equal(plan.statusCode, 201);
+  f.fill(plan.data.id);
+  assert.equal((await api.complete(plan.data.id)).statusCode, 201);
+  const reports = (await api.request(undefined, { method: 'GET' })).data.reports;
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].id, plan.data.id);
+  assert.equal((await api.request(metadata, { reportId: id })).statusCode, 409);
 });

@@ -48,6 +48,26 @@ The browser uploads directly to S3 using URLs that expire after 15 minutes. Repo
 
 Choose **External HTTPS link** instead of Upload HTML to index a report hosted elsewhere. An entry is either one external HTTPS URL or uploaded report content—never both.
 
+### Incomplete uploads (opt-in publication V2)
+
+When administrators enable publication V2, uploaded files stay in private staging
+until every file has been verified and the report is published atomically. A
+replacement leaves the previous committed revision available until publication.
+
+In the GitHub-signed-in admin page, open **Incomplete uploads** and select
+**Refresh uploads**. Only your uploads appear. Use **Load next page** to continue
+the scan and **Inspect file progress** to check missing or mismatched files;
+Unknown means progress has not been checked or could not be read.
+
+Incomplete uploads are retained for seven days from creation, then automatically
+cleaned up. Upload URLs expire after 15 minutes; retention does not renew them or
+make uploads resumable. Failed validation or expired URLs require a fresh upload.
+After a completion timeout, refresh the hub before uploading again: publication
+may have succeeded. Finalized reports have no automatic expiry.
+
+V2 requires an administrator rollout; this documentation does not indicate it is
+enabled on the running service. See the [rollout guide](_infra/REPORT_PUBLICATION_ROLLOUT.md).
+
 ### CLI upload for multi-file reports and local automation
 
 Use the repository's CLI uploader for a report directory with relative assets or for scripted publishing from your machine. The script must remain in an intact checkout, but it may be invoked from any directory; cloning, `--help`, login, options, limits, and troubleshooting are documented in the [CLI guide](CLI.md). Local agents must obtain explicit user approval for each upload, whether internal/private or public, including the exact bundle, entry page, metadata, and visibility; see the [agent upload guidance](CLI.md#local-coding-agents).

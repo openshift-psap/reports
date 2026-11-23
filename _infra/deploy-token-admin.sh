@@ -35,8 +35,8 @@ EOF
 aws s3api put-bucket-cors --bucket "$S3_BUCKET" --cors-configuration "file://$WORK_DIR/s3-cors.json" --region "$S3_REGION"
 
 echo "=== Package token-admin Lambda ==="
-cp "$LAMBDA_DIR/index.js" "$LAMBDA_DIR/package.json" "$LAMBDA_DIR/package-lock.json" "$WORK_DIR/"
-(cd "$WORK_DIR" && npm ci --omit=dev --ignore-scripts && zip -qr function.zip index.js node_modules)
+cp "$LAMBDA_DIR/"*.js "$LAMBDA_DIR/package.json" "$LAMBDA_DIR/package-lock.json" "$WORK_DIR/"
+(cd "$WORK_DIR" && npm ci --omit=dev --ignore-scripts && zip -qr function.zip ./*.js node_modules)
 
 echo "=== Create or update IAM role ==="
 ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
@@ -49,14 +49,36 @@ aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name psap-reports-toke
 
 echo "=== Create or update Lambda ==="
 ENVIRONMENT="Variables={S3_BUCKET=$S3_BUCKET,S3_REGION=$S3_REGION,COOKIE_SECRET=$COOKIE_SECRET,CLOUDFRONT_DOMAIN=$CF_DOMAIN}"
+if [[ -n "${REPORT_STAGING_BUCKET:-}" ]]; then
+  if [[ ! -v REPORT_UPLOAD_MODE ]]; then
+    if REPORT_UPLOAD_MODE=$(aws lambda get-function-configuration --function-name "$FUNCTION_NAME" --region "$REGION" --query 'Environment.Variables.REPORT_UPLOAD_MODE' --output text 2>"$WORK_DIR/mode-error"); then
+      case "$REPORT_UPLOAD_MODE" in None|null|'') REPORT_UPLOAD_MODE=paused ;; esac
+    elif grep -q 'ResourceNotFoundException' "$WORK_DIR/mode-error"; then
+      REPORT_UPLOAD_MODE=paused
+    else
+      echo "Could not read deployed upload mode; refusing to change it." >&2
+      exit 1
+    fi
+  fi
+  [[ "$REPORT_UPLOAD_MODE" == paused || "$REPORT_UPLOAD_MODE" == v2 ]] || { echo "REPORT_UPLOAD_MODE must be paused or v2" >&2; exit 1; }
+  ENVIRONMENT="Variables={S3_BUCKET=$S3_BUCKET,S3_REGION=$S3_REGION,COOKIE_SECRET=$COOKIE_SECRET,CLOUDFRONT_DOMAIN=$CF_DOMAIN,REPORT_STAGING_BUCKET=$REPORT_STAGING_BUCKET,REPORT_UPLOAD_MODE=$REPORT_UPLOAD_MODE}"
+elif aws lambda get-function-configuration --function-name "$FUNCTION_NAME" --region "$REGION" --query 'Environment.Variables.REPORT_STAGING_BUCKET' --output text 2>/dev/null | grep -qvE '^(None|null|)$'; then
+  echo "Refusing to remove existing lifecycle configuration. Supply REPORT_STAGING_BUCKET and use paused to stop issuance." >&2
+  exit 1
+fi
 if aws lambda get-function --function-name "$FUNCTION_NAME" --region "$REGION" >/dev/null 2>&1; then
   aws lambda update-function-code --function-name "$FUNCTION_NAME" --zip-file "fileb://$WORK_DIR/function.zip" --region "$REGION" >/dev/null
   aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME" --region "$REGION"
   aws lambda update-function-configuration --function-name "$FUNCTION_NAME" --environment "$ENVIRONMENT" --region "$REGION" >/dev/null
+  aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME" --region "$REGION"
 else
   aws lambda create-function --function-name "$FUNCTION_NAME" --runtime nodejs20.x --role "$ROLE_ARN" --handler index.handler --zip-file "fileb://$WORK_DIR/function.zip" --timeout 10 --memory-size 128 --environment "$ENVIRONMENT" --region "$REGION" >/dev/null
 fi
 aws lambda wait function-active-v2 --function-name "$FUNCTION_NAME" --region "$REGION"
+if [[ -n "${REPORT_STAGING_BUCKET:-}" ]]; then
+  aws lambda update-function-configuration --function-name "$FUNCTION_NAME" --timeout 120 --memory-size 512 --region "$REGION" >/dev/null
+  aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME" --region "$REGION"
+fi
 FUNCTION_ARN=$(aws lambda get-function --function-name "$FUNCTION_NAME" --region "$REGION" --query 'Configuration.FunctionArn' --output text)
 
 echo "=== Create or update API Gateway ==="
@@ -100,7 +122,11 @@ COMPLETE_ID=$(aws apigateway get-resources --rest-api-id "$API_ID" --query "item
 if [ -z "$COMPLETE_ID" ] || [ "$COMPLETE_ID" = "None" ]; then
   COMPLETE_ID=$(aws apigateway create-resource --rest-api-id "$API_ID" --parent-id "$REPORT_ID" --path-part complete --query id --output text)
 fi
-for method_resource in "GET:$REPORTS_ID" "POST:$REPORTS_ID" "DELETE:$REPORTS_ID" "PATCH:$REPORTS_ID" "POST:$COMPLETE_ID"; do
+UPLOADS_ID=$(aws apigateway get-resources --rest-api-id "$API_ID" --query "items[?path=='$ROUTE_PREFIX/uploads'].id | [0]" --output text)
+if [ -z "$UPLOADS_ID" ] || [ "$UPLOADS_ID" = "None" ]; then
+  UPLOADS_ID=$(aws apigateway create-resource --rest-api-id "$API_ID" --parent-id "$PREFIX_ID" --path-part uploads --query id --output text)
+fi
+for method_resource in "GET:$REPORTS_ID" "POST:$REPORTS_ID" "DELETE:$REPORTS_ID" "PATCH:$REPORTS_ID" "POST:$COMPLETE_ID" "GET:$UPLOADS_ID"; do
   method=${method_resource%%:*}
   resource_id=${method_resource#*:}
   if ! aws apigateway get-method --rest-api-id "$API_ID" --resource-id "$resource_id" --http-method "$method" >/dev/null 2>&1; then

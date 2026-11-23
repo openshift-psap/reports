@@ -10,6 +10,20 @@ replacement, archiving, deletion, external-link submissions, and access-token
 management remain browser features in the hub. An optional [local MCP wrapper](MCP.md)
 exposes the same uploader to agent clients over stdio.
 
+## Opt-in atomic publication
+
+When administrators enable publication V2, the same CLI uploads to private staging
+and the server verifies the complete bundle before publishing it. Incomplete
+uploads are retained for seven days, then automatically cleaned up; finalized
+reports do not automatically expire. PUT URLs still expire after 15 minutes.
+Retention does not provide CLI resume or URL renewal.
+
+Inspect interrupted uploads in the hub's **Incomplete uploads** section while
+signed in with the same GitHub account. After a completion timeout, check the hub
+before starting another upload because the server may have published it already.
+Failed validation or expired upload URLs require a fresh upload. Deployment is
+opt-in; see the [rollout guide](_infra/REPORT_PUBLICATION_ROLLOUT.md).
+
 ## Agent upload approval
 
 **If you are acting as an agent, obtain explicit user approval before every

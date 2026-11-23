@@ -286,6 +286,42 @@ exports.handler = async (event) => {
   const headers = request.headers;
   const uri = request.uri;
 
+  // Publication checks run at viewer-request, before cache lookup and before
+  // every public/authenticated bypass. Never serve control or physical keys.
+  let decoded;
+  try { decoded = decodeURIComponent(uri); }
+  catch (_) { return { status: '400', body: 'Invalid path' }; }
+  if (/%[0-9a-f]{2}/i.test(decoded)) return { status: '400', body: 'Ambiguous path encoding' };
+  const forbidden = /^\/(report-objects-v2|report-control-v2|report-locators-v2|report-reconciliation-v2|report-submissions|uploads)(\/|$)/;
+  const normalized = require('path').posix.normalize(decoded.replace(/\\/g, '/'));
+  if (forbidden.test(decoded) || forbidden.test(normalized)) return { status: '403', headers: {
+    'cache-control': [{ key: 'Cache-Control', value: 'no-store' }],
+  }, body: 'Not a report path.' };
+  if (/^\/(public|private)\/v2(?:\/|$)/.test(decoded) || /^\/(public|private)\/v2(?:\/|$)/.test(normalized)) {
+    const deny = (status, body) => ({ status, headers: { 'cache-control': [{ key: 'Cache-Control', value: 'no-store' }] }, body });
+    if (decoded !== normalized || decoded.includes('%') || decoded.includes('\\') || /%2f|%5c/i.test(uri) || !['GET', 'HEAD'].includes(request.method)) return deny('400', 'Invalid report path');
+    const match = decoded.match(/^\/(public|private)\/v2\/([a-f0-9-]{36})\/([a-f0-9-]{36})\/(.+)$/);
+    if (!match) return deny('404', 'Report not found');
+    const [, access, reportId, revisionId, relative] = match;
+    if (relative.split('/').some(part => !part || part === '.' || part === '..')) return deny('400', 'Invalid report path');
+    if (access === 'private') {
+      const cookie = parseCookies(headers)[CONFIG.cookieName];
+      if (!cookie || !verifyCookie(cookie)) return loginPage(uri + (request.querystring ? '?' + request.querystring : ''));
+    }
+    try {
+      const result = await s3.send(new GetObjectCommand({ Bucket: CONFIG.s3Bucket, Key: `report-control-v2/${reportId}.json` }));
+      const doc = JSON.parse(await result.Body.transformToString());
+      const revision = doc.revisions?.[revisionId];
+      if (doc.id !== reportId || revision?.state !== 'COMMITTED' || revision.metadata.authenticated !== (access === 'private') || !revision.files?.some(file => file.name === relative)) return deny('404', 'Report not found');
+      const prefix = revision.attempts?.[revision.selectedAttempt]?.prefix;
+      if (prefix !== `report-objects-v2/${revisionId}/${revision.selectedAttempt}/` || !/^[a-f0-9-]{36}$/.test(revision.selectedAttempt)) return deny('503', 'Publication state unavailable');
+      request.uri = '/' + (prefix + relative).split('/').map(encodeURIComponent).join('/');
+      return request;
+    } catch (error) {
+      return deny(error.$metadata?.httpStatusCode === 404 || error.name === 'NoSuchKey' ? '404' : '503', 'Report unavailable');
+    }
+  }
+
   // Redirect raw CloudFront domain to the canonical custom domain so that
   // OAuth callbacks, API endpoints, and uploads work correctly.
   const host = headers.host && headers.host[0] && headers.host[0].value;
