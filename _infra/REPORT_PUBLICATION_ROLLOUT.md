@@ -91,9 +91,12 @@ updated scoped IAM policy before deploying this adapter.
    readable.
 6. Enable `CleanupEnabled=true` while keeping `CleanupNotificationsEnabled=false`.
    Confirm the worker heartbeat/full scan and healthy alarm states, then set
-   `CleanupNotificationsEnabled=true` and verify the configured notification
-   destination. Deploy the generated hub. Validate in isolated AWS resources with
-   explicit approval for test uploads and deletions.
+   `CleanupNotificationsEnabled=true`. Updating an alarm rewrites its configuration
+   and can clear a notification destination attached outside the template. After
+   this and any later alarm configuration update, verify the destination on every
+   cleanup alarm and reattach any missing destination before relying on alerts.
+   Deploy the generated hub. Validate in isolated AWS resources with explicit
+   approval for test uploads and deletions.
 7. Set API mode `v2` only after validation passes. Never enable issuance without
    both the gate and working cleanup.
 
