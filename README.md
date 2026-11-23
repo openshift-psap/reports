@@ -4,10 +4,11 @@ Report hub and report bundles are served from private S3 through CloudFront. Git
 
 See [Using the PSAP Report Hub](USING_THE_REPORT_HUB.md) for browsing, sign-in, token management, and report publishing instructions. For command-line uploads, including authentication, limits, and automation constraints, see the [CLI guide](CLI.md).
 
-Opt-in publication V2 adds atomic bundle publication, seven-day incomplete-upload
-retention with automatic cleanup, and an owner-only dashboard. See the
-[rollout and recovery guide](_infra/REPORT_PUBLICATION_ROLLOUT.md) for enablement
-and live-validation requirements; repository support does not imply deployment.
+Publication V2 is **enabled in production as of 2026-11-23**: atomic bundle
+publication, seven-day incomplete-upload retention with automatic cleanup, and
+an owner-only dashboard. See the
+[rollout and recovery guide](_infra/REPORT_PUBLICATION_ROLLOUT.md) for deployment
+status and recovery procedures.
 
 Agent clients can optionally use the [local stdio MCP uploader](MCP.md), which shares the CLI's upload and authentication implementation.
 
@@ -15,12 +16,12 @@ Agent clients can optionally use the [local stdio MCP uploader](MCP.md), which s
 
 1. **Report bundles live only in S3** — submitters upload an HTML bundle with a designated entry page through the protected hub or CLI.
 2. **The repository deploys the hub shell** — GitHub Actions uses OIDC to publish the application UI and infrastructure-controlled artifacts.
-3. **Metadata is per-report** — S3 objects under `report-meta/public/` and `report-meta/authenticated/` power the dynamic index without a shared mutable manifest.
+3. **Metadata is per-report** — conditional S3 control documents under `report-control-v2/` own V2 publication and lifecycle state. Legacy `report-meta/public/` and `report-meta/authenticated/` entries remain readable; there is no shared mutable manifest or database.
 4. **Auth via CloudFront** — `private/` reports are gated by GitHub OAuth, verified `redhat.com` Google sign-in (view only), or an access token; `public/` reports are deliberately anonymous.
 
 ## Adding a report
 
-Sign in at the CloudFront hub and use **Submit a report** to upload one self-contained HTML file; any HTML filename is accepted. For a report with relative assets or multiple files, use the [CLI uploader](CLI.md), which preserves directory-relative paths, including a nested entry page. The browser or CLI receives short-lived, prefix-scoped S3 upload URLs. Legacy publication checks the designated entry file; when V2 is enabled, files go to private staging and every file is verified before atomic publication.
+Sign in at the CloudFront hub and use **Submit a report** to upload one self-contained HTML file; any HTML filename is accepted. For a report with relative assets or multiple files, use the [CLI uploader](CLI.md), which preserves directory-relative paths, including a nested entry page. The browser or CLI receives short-lived, prefix-scoped S3 upload URLs. Files go to private staging and every file is verified before atomic publication.
 
 Do not commit report HTML, assets, or private report metadata to this repository.
 
