@@ -10,19 +10,25 @@ replacement, archiving, deletion, external-link submissions, and access-token
 management remain browser features in the hub. An optional [local MCP wrapper](MCP.md)
 exposes the same uploader to agent clients over stdio.
 
-## Opt-in atomic publication
+## Atomic publication — live in production
 
-When administrators enable publication V2, the same CLI uploads to private staging
-and the server verifies the complete bundle before publishing it. Incomplete
-uploads are retained for seven days, then automatically cleaned up; finalized
-reports do not automatically expire. PUT URLs still expire after 15 minutes.
-Retention does not provide CLI resume or URL renewal.
+Publication V2 is enabled on the production hub as of **2026-11-23**. The same CLI
+uploads to private staging, and the server verifies every expected file, pins its
+S3 version, and verifies the copied bytes before publishing the complete bundle.
+Incomplete uploads remain inaccessible to report viewers, including for public
+reports. They are retained for seven days from creation, then automatically
+cleaned up. Cleanup targets verification within 30 minutes of that deadline with
+healthy dependencies and sufficient scan capacity; it is not instantaneous.
+Finalized reports do not automatically expire. PUT URLs still expire after
+15 minutes. Retention does not provide CLI resume or URL renewal.
 
 Inspect interrupted uploads in the hub's **Incomplete uploads** section while
 signed in with the same GitHub account. After a completion timeout, check the hub
 before starting another upload because the server may have published it already.
-Failed validation or expired upload URLs require a fresh upload. Deployment is
-opt-in; see the [rollout guide](_infra/REPORT_PUBLICATION_ROLLOUT.md).
+Failed validation or an unfinished transfer with expired upload URLs requires a
+fresh upload. If every file arrived before URL expiry, the server can still
+complete publication within the seven-day retention window. See the
+[rollout and recovery guide](_infra/REPORT_PUBLICATION_ROLLOUT.md).
 
 ## Agent upload approval
 
@@ -270,9 +276,9 @@ paths (see Troubleshooting).
 All uploads default to internal visibility. Add `--access public` only for a
 report intended for anonymous readers.
 
-The CLI sends the file list first, then uploads each file to a short-lived S3
-URL, and finally asks the service to publish the report. The service checks
-that the entry HTML exists before publishing metadata.
+The CLI sends the file list first, then uploads each file to a short-lived private
+staging URL, and finally asks the service to publish the report. The service
+checks the complete manifest, including assets, before making the bundle visible.
 
 ### Symlink boundary and filesystem changes
 
@@ -335,16 +341,35 @@ URL:
 Uploaded site/index.html
 Uploaded site/assets/style.css
 Uploaded site/assets/chart.png
-https://reports.psap.aws.rhperfscale.org/private/benchmarks/2026-11-19_inference-benchmark-1a2b3c4d/site/index.html
+https://reports.psap.aws.rhperfscale.org/private/v2/11111111-1111-4111-8111-111111111111/11111111-1111-4111-8111-111111111111/site/index.html
 ```
 
 The final line is the entry page URL, not an administrative page and not a
 report ID. Internal reports use a `private/` path; public reports use `public/`.
+New reports use `private/v2/<report-id>/<revision-id>/...` or
+`public/v2/<report-id>/<revision-id>/...`; use the returned URL rather than
+constructing it from the title or category. Existing report links remain valid.
 The authenticated GitHub handle is recorded as the submitter.
 
 The CLI does not print the report ID, list reports, or update an existing
 report. A successful upload creates a new report entry. If you lose the URL,
 find the report in the hub; authenticated users can see report IDs on cards.
+
+## Delete a CLI-uploaded report
+
+There is no CLI delete command. Open the
+[hub](https://reports.psap.aws.rhperfscale.org/admin/index.html), sign in with
+GitHub as the same account that uploaded the report, find the report, and select
+**Delete** on the intended revision. Confirm deletion. CLI Device Flow login does
+not sign you in to the browser.
+
+For V2 reports, deletion closes the viewer path before removing the published
+bundle and verifying that its object versions are gone. If deletion fails, refresh
+and retry **Delete**; do not assume an error means no files were removed. Lifecycle
+records remain for recovery and late-write cleanup. Deletion is not reversible
+through the hub. Use **Archive** to retain the files and links instead. See the
+[full deletion instructions](USING_THE_REPORT_HUB.md#delete-a-report), including
+legacy reports and external links.
 
 ## Limits
 
@@ -356,16 +381,18 @@ The service enforces these limits:
 | Total bundle size | 100 MB maximum |
 | Individual file size | 100 MB maximum |
 | Upload URL lifetime | 15 minutes from upload-plan creation |
+| Incomplete upload retention / completion deadline | Seven days from upload-plan creation; does not renew PUT URLs |
 | Entry page | One designated entry file, which must be one of the uploaded files and may be nested |
 | Tags | 20 kept, 40 characters each |
 | Title | 180 characters |
 | Description | 1000 characters |
 
 The CLI does not pre-check file count or total size. A large or slow upload can
-outlive its upload URLs. An upload may then fail, or the completion request may
-fail with an expired-plan error; in either case no report is published. Re-run
-the command to obtain a fresh plan, but check the hub first if the previous run
-may have completed.
+outlive its upload URLs, causing remaining PUTs to fail. URL expiry alone does not
+prevent completion if all files already arrived; the completion deadline is seven
+days. Re-run the command for an unfinished transfer to obtain a fresh plan, but
+check the hub first if the previous run may have completed. A completion timeout
+does not prove publication failed.
 
 File names must be unique relative paths without backslashes, leading slashes,
 empty segments, `.` segments, or `..` segments. Hidden files are uploaded like
@@ -387,9 +414,13 @@ any other file.
 | `API error (400): pathMode must be strip or preserve` | The service rejected the path-preservation option. Treat this as a client/service version mismatch and do not retry the same upload. |
 | `The report API did not confirm pathMode=preserve; update the report service before uploading` | The service endpoint does not support path preservation. The CLI stopped before uploading any files. Use the current CLI and service from `main`, and report a version mismatch if this persists. |
 | `Upload plan does not match the source files` | The service returned upload targets that do not match the staged bundle. No files were uploaded; report the mismatch rather than retrying blindly. |
-| `API error (400): The selected HTML entry file has not been uploaded yet` | An upload did not land or used a different name. Retry with a fresh plan. |
-| `API error (410): Upload plan expired; start again` | The 15-minute window closed. Re-run the command. |
-| `API error (404): Upload plan not found or already completed` | The plan was already completed or expired. Check the hub before re-uploading. |
+| `API error (400): Missing or mismatched upload file: …` | A manifest file is absent or has the wrong size/type. Inspect file progress in the hub and start a fresh upload. |
+| `API error (410): Upload retention deadline passed; start a new upload` | The seven-day completion window closed. Start a fresh upload. |
+| `API error (410): Legacy upload plan retired; start a new upload` | The plan predates the V2 rollout. Start a fresh upload; existing published reports are unaffected. |
+| `API error (409): Completion is in progress; retry shortly` or a completion timeout | Check the hub before re-running; completion may still succeed. The CLI has no resume/completion-only command. |
+| `API error (409): Upload is no longer publishable; start a new upload` | The attempt was aborted or deleted. Inspect the hub, then start a fresh upload if needed. |
+| `API error (404): Upload plan not found` | The plan cannot be located. Check the hub before creating another report. |
+| `API error (503): New uploads are paused for publication rollout` | Administrators paused issuance. Wait for service recovery; existing reports remain readable. |
 | `Source not found: <path>` | Check the HTML file or directory path. |
 | `--entry-file is required when uploading a directory` | Pass the HTML entry path relative to the directory. |
 | `Entry file not found: <path>` | Use an exact relative path without a leading `./`. |

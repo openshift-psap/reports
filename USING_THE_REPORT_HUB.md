@@ -48,9 +48,9 @@ The browser uploads directly to S3 using URLs that expire after 15 minutes. Repo
 
 Choose **External HTTPS link** instead of Upload HTML to index a report hosted elsewhere. An entry is either one external HTTPS URL or uploaded report content—never both.
 
-### Incomplete uploads (opt-in publication V2)
+### Incomplete uploads (publication V2)
 
-When administrators enable publication V2, uploaded files stay in private staging
+Publication V2 is enabled in production as of **2026-11-23**. Uploaded files stay in private staging
 until every file has been verified and the report is published atomically. A
 replacement leaves the previous committed revision available until publication.
 
@@ -60,13 +60,15 @@ the scan and **Inspect file progress** to check missing or mismatched files;
 Unknown means progress has not been checked or could not be read.
 
 Incomplete uploads are retained for seven days from creation, then automatically
-cleaned up. Upload URLs expire after 15 minutes; retention does not renew them or
+cleaned up, targeting verified cleanup within 30 minutes after the deadline with
+healthy dependencies and sufficient scan capacity. Upload URLs expire after 15 minutes; retention does not renew them or
 make uploads resumable. Failed validation or expired URLs require a fresh upload.
 After a completion timeout, refresh the hub before uploading again: publication
 may have succeeded. Finalized reports have no automatic expiry.
 
-V2 requires an administrator rollout; this documentation does not indicate it is
-enabled on the running service. See the [rollout guide](_infra/REPORT_PUBLICATION_ROLLOUT.md).
+Completion can still succeed after PUT URL expiry if every file already arrived
+and the seven-day completion deadline has not passed. See the
+[rollout and recovery guide](_infra/REPORT_PUBLICATION_ROLLOUT.md).
 
 ### CLI upload for multi-file reports and local automation
 
@@ -96,27 +98,34 @@ Workstream owners curate the optional prominent tag shortcuts in [`_generator/wo
 
 ## Delete a report
 
-After signing in with GitHub, a **Delete** button appears only on reports attributed to your verified GitHub handle. Confirming deletion permanently removes that revision's metadata. For new uploads, whose metadata records the bundle `baseKey`, it also removes every uploaded object under the bundle prefix, including a nested entry page and its sibling assets. Older reports without `baseKey` use the previous fallback, which removes the directory containing the entry page; files outside that directory may remain. This cannot be undone through the hub.
+1. Sign in with GitHub as the account that submitted the report. CLI/MCP login
+   does not sign you in to the browser.
+2. Find the intended report/revision. **Delete** appears only on reports attributed
+   to your verified GitHub handle.
+3. Select **Delete** and confirm. This cannot be undone through the hub.
 
-With the updated deletion service, bundle files are deleted first, then the
-service verifies the bundle prefix is empty before removing metadata. A partial
-S3 deletion, storage error, or unsuccessful verification returns an error and
-retains the listing so the owner can retry **Delete**. Some files may already be
-gone, so a report whose deletion failed may no longer render completely.
-Retries can finish deletion even when some or all files were already removed.
+The production V2 service closes a V2 revision's viewer path before deleting its
+published bundle, including nested assets and object versions. It verifies that
+the managed prefix is empty before marking the revision deleted and removing it
+from the listing. Control records remain for recovery and reconciliation; deletion
+does not erase all lifecycle evidence. Other retained revisions are not deleted.
 
-If file cleanup succeeds but metadata deletion fails, the API still reports
-failure. Refresh the listing and retry **Delete** if the entry remains. Do the
-same after a network error where the outcome is unknown. Contact the hub
-administrator if failures persist; include the report ID and whether the error
-concerns files or metadata. External-link entries only require metadata deletion.
-The hub keeps its existing card and controls on an error rather than claiming
-successful removal.
+A partial deletion, storage error, or failed verification returns an error and
+retains the owner listing so you can refresh and retry **Delete**. The V2 viewer
+path is already closed, and some files may already be gone. Retry after a network
+error too: a lost response does not establish whether deletion completed. If
+failures persist, contact the administrator with the report ID and error.
 
-These guarantees require deployment of the updated API and hub; merging source
-alone does not verify a running deployment. This deletion fix does not revoke
-still-valid upload URLs or clean up abandoned uploads; that lifecycle work is
-tracked separately in [#15](https://github.com/openshift-psap/reports/issues/15).
+Legacy reports are adopted into lifecycle tracking when changed or deleted. Their
+deletion scope uses the recorded bundle `baseKey`, or, for older reports without
+one, the directory containing the entry page; files outside that directory may
+remain. Legacy URLs do not gain the V2 viewer gate. External-link deletion removes
+the hub entry, not content on the external host.
+
+Scheduled cleanup removes abandoned V2 uploads after their seven-day retention
+period and revisits managed prefixes for late writes. It does not automatically
+delete historical content or revoke old PUT URLs. The CLI and MCP currently upload
+new reports only; neither provides a delete command/tool.
 
 Use **Archive** instead to retire an old or deprecated report without deleting its files. Archived reports remain available through their links and can be found with the status filter, but are clearly marked as archived.
 

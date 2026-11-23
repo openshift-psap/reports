@@ -4,6 +4,23 @@ The optional `upload_report` tool publishes a new HTML report through the same
 uploader and GitHub authentication cache as [the CLI](CLI.md). It runs locally
 over stdio; there is no hosted MCP endpoint or shared service identity.
 
+## Production publication and cleanup
+
+Publication V2 is live on the production hub as of **2026-11-23**. `upload_report`
+uses private staging and publishes only after the server verifies the complete
+bundle, including assets. Its arguments and success result are unchanged.
+
+Incomplete uploads are retained for seven days from creation and then cleaned up
+automatically. Cleanup targets verification within 30 minutes after that deadline
+with healthy dependencies and sufficient scan capacity. PUT URLs expire after
+15 minutes; retention does not renew them or provide resume support. If every file
+already arrived, server-side completion remains possible until the seven-day
+deadline. Finalized reports have no automatic expiry.
+
+Inspect progress in the hub's **Incomplete uploads** section while signed in with
+the same GitHub account. A timeout may occur after successful publication, so check
+the hub before calling `upload_report` again: another call creates a new report.
+
 ## Install and authenticate
 
 Use Python 3.10 or newer and an intact repository checkout:
@@ -146,7 +163,7 @@ browser tokens, and AWS credentials do not grant upload eligibility here.
    ```json
    {
      "id": "example-report-id",
-     "path": "https://reports.psap.aws.rhperfscale.org/private/benchmarks/example/site/index.html"
+      "path": "https://reports.psap.aws.rhperfscale.org/private/v2/example-report-id/example-report-id/site/index.html"
    }
    ```
 
@@ -165,6 +182,22 @@ hub before retrying: a lost response may follow a successful publication, and
 a new call creates a new report. Approval is an agent workflow rule, not a
 technical enforcement mechanism. Unattended CI authentication and report
 lifecycle operations are not supported.
+
+## Delete an MCP-uploaded report
+
+The MCP server exposes only `upload_report`; there is no `delete_report` tool,
+and the CLI has no delete command. Save the returned ID and URL, then open the
+[hub](https://reports.psap.aws.rhperfscale.org/admin/index.html) and sign in with
+GitHub as the uploader. Find the intended report/revision, select **Delete**, and
+confirm. MCP/CLI login does not create a browser session.
+
+For V2 reports, deletion closes the viewer path, removes the published bundle,
+and verifies physical deletion before reporting success. If it fails, refresh and
+retry **Delete**; some files may already be gone. Recovery records are retained,
+and scheduled cleanup catches late staging writes. Use **Archive** instead if
+files and links should remain available. See the
+[hub deletion guide](USING_THE_REPORT_HUB.md#delete-a-report) for legacy-report
+scope, external links, and error recovery.
 
 ## Tests
 

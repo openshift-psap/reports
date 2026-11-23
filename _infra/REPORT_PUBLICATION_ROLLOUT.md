@@ -194,3 +194,23 @@ and existing browser/CLI behavior.
 Real IAM isolation, S3 conditional/version semantics, edge caching/propagation,
 cleanup throughput, and completion/gate latency still require separately approved
 tests in isolated AWS resources. Local success does not claim a production rollout.
+
+## Production status — 2026-11-23
+
+Publication V2 was deployed and enabled from merged main `3b337b9` (PR #25)
+after isolated AWS validation and explicit production authorization. The API runs
+with `REPORT_UPLOAD_MODE=v2`; edge version 16 gates all three viewer-request
+behaviors. The cleanup schedule is enabled, and all four production alarms were
+healthy with notification actions and the confirmed SNS destination verified.
+The rendered deployment template includes `AlarmActions` so readiness updates
+preserve that destination. Full-stack deployment automation remains tracked in #24.
+
+Production smoke checks passed public/private publication, missing-file inspection,
+cached-response access control, deletion gate closure, and physical synthetic-data
+cleanup. CloudFront returned `RefreshHit` for `no-cache` revalidation; these were
+not unqualified cache-hit observations. All synthetic report objects were removed.
+The 29 existing metadata records and eight legacy pending records were unchanged.
+Seven-day elapsed lifecycle behavior and sustained-load/scan-capacity limits remain
+outside the bounded tests. SNS configuration and subscription were verified, not
+independent receipt of an alert email. Use the recovery procedure above if issuance
+must be paused; retain the V2 gate, reads, and cleanup.
