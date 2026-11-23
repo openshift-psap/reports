@@ -61,10 +61,26 @@ function createStore({ s3, bucket, stagingBucket }) {
       return getSignedUrl(s3, new sdk.PutObjectCommand({ Bucket: stagingBucket, Key: `uploads/${id}/${file.name}`, ContentType: file.contentType, CacheControl: 'no-cache' }), { expiresIn: ttl });
     },
     async inspect(id, name) {
+      const Key = `uploads/${id}/${name}`;
       try {
-        const result = await send('HeadObject', { Bucket: stagingBucket, Key: `uploads/${id}/${name}` });
+        const result = await send('HeadObject', { Bucket: stagingBucket, Key });
         return { version: result.VersionId, size: result.ContentLength, contentType: result.ContentType };
-      } catch (error) { if (missing(error)) return null; throw error; }
+      } catch (error) {
+        if (missing(error)) return null;
+        if (error.$metadata?.httpStatusCode !== 403) throw error;
+        // A missing key can return 403 with prefix-scoped ListBucket rights.
+        // Prove absence with an authorized listing; never reinterpret denial
+        // of an existing object (or of the listing itself) as a missing file.
+        let ContinuationToken;
+        do {
+          const page = await send('ListObjectsV2', { Bucket: stagingBucket, Prefix: Key, MaxKeys: 1000, ContinuationToken });
+          const objects = page.Contents || [];
+          if (objects.some(object => !object.Key?.startsWith(Key) || object.Key === Key)) throw error;
+          if (page.IsTruncated && (!page.NextContinuationToken || page.NextContinuationToken === ContinuationToken)) throw error;
+          ContinuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+        } while (ContinuationToken);
+        return null;
+      }
     },
     async copyVerified(id, file, prefix) {
       const source = { Bucket: stagingBucket, Key: `uploads/${id}/${file.name}`, VersionId: file.version };

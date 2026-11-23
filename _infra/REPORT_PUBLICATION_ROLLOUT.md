@@ -55,6 +55,15 @@ Summary pages avoid HEAD requests for every file. **Inspect file progress** chec
 one upload; failed S3 observations display Unknown. Empty pages may still have a
 continuation cursor. Cursors are signed and bound to the GitHub owner.
 
+The API role can list only staging's `uploads/*` namespace. A missing staging
+object may still return 403 to HEAD under prefix-scoped permissions. In that
+case the adapter lists the exact key prefix and reports missing only after a
+successful, complete listing proves the exact key absent. Prefix-sharing siblings
+do not count as the requested file. A listed but unreadable object, failed
+listing, or incomplete pagination remains a storage error/Unknown observation;
+arbitrary permission denials are never interpreted as missing files. Deploy the
+updated scoped IAM policy before deploying this adapter.
+
 ## Deployment sequence — separate authorization required
 
 1. Inventory actual report-bucket policies, versioning, Object Lock, replication,
@@ -66,7 +75,8 @@ continuation cursor. Cursors are signed and bound to the GitHub owner.
    uses that artifact with handler `reconcile.handler`. Supply its artifact
    bucket/key explicitly; no credentials belong in the artifact.
 3. Deploy the stack with existing report bucket/role names. It adds scoped
-   policies rather than replacing existing ones. The schedule starts disabled.
+   policies rather than replacing existing ones. The schedule and alarm actions
+   start disabled (`CleanupEnabled=false`, `CleanupNotificationsEnabled=false`).
    Connect the alarms to the team's notification channel; template alarms have
    no notification destination until that integration is configured.
 4. Deploy the new authorizer to **every** relevant cache behavior and wait for
@@ -79,9 +89,14 @@ continuation cursor. Cursors are signed and bound to the GitHub owner.
    Old completion IDs without V2 locators now return a retired-plan error; do not
    silently convert incomplete legacy uploads. Existing committed reports remain
    readable.
-6. Enable `CleanupEnabled=true` and confirm the worker heartbeat/full scan. Deploy
-   the generated hub. Validate in isolated AWS resources with explicit approval
-   for test uploads and deletions.
+6. Enable `CleanupEnabled=true` while keeping `CleanupNotificationsEnabled=false`.
+   Confirm the worker heartbeat/full scan and healthy alarm states, then set
+   `CleanupNotificationsEnabled=true`. Updating an alarm rewrites its configuration
+   and can clear a notification destination attached outside the template. After
+   this and any later alarm configuration update, verify the destination on every
+   cleanup alarm and reattach any missing destination before relying on alerts.
+   Deploy the generated hub. Validate in isolated AWS resources with explicit
+   approval for test uploads and deletions.
 7. Set API mode `v2` only after validation passes. Never enable issuance without
    both the gate and working cleanup.
 
@@ -144,6 +159,15 @@ missing heartbeats, full scans older than a day, and cleanup over 30 minutes
 overdue. Logs omit tokens, signed URLs, raw storage errors, and staged contents.
 Monitor gate latency/fail-closed responses with Lambda@Edge and CloudFront metrics
 during isolated validation and rollout.
+
+All cleanup alarm actions require both `CleanupEnabled=true` and
+`CleanupNotificationsEnabled=true`. Alarms still evaluate while actions are
+disabled: an ALARM state before first metrics is expected and does not send a
+notification. Heartbeat/scan-age alarms continue to treat missing data as
+breaching once enabled, so a failed worker is not silently ignored. Before an
+intentional cleanup shutdown, reset notification readiness to false; after a
+restart, verify fresh heartbeat/full-scan evidence before re-enabling it. Pausing
+upload issuance alone does not stop cleanup or its notifications.
 
 ## Recovery and rollback
 
