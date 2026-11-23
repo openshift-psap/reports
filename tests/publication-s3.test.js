@@ -97,3 +97,66 @@ test('storage propagates conditional conflicts and rejects truncated lists witho
   await assert.rejects(load(async () => { throw error; }).put('control', {}, 'etag'), actual => actual === error);
   await assert.rejects(load(async () => ({ IsTruncated: true })).list(), /Incomplete control listing/);
 });
+
+test('a forbidden staging HEAD is missing only after successful exact-key absence verification', async () => {
+  const denied = Object.assign(new Error('denied'), { $metadata: { httpStatusCode: 403 } });
+  const calls = [];
+  const store = load(async command => {
+    calls.push(command);
+    if (command.name === 'HeadObject') throw denied;
+    assert.equal(command.name, 'ListObjectsV2');
+    assert.equal(command.input.Bucket, 'staging');
+    assert.equal(command.input.Prefix, 'uploads/id/site/app.js');
+    // A sibling whose name starts with the requested key is not that object.
+    return { Contents: [{ Key: 'uploads/id/site/app.js.map' }] };
+  });
+  assert.equal(await store.inspect('id', 'site/app.js'), null);
+  assert.equal(calls.length, 2);
+});
+
+test('staging lookup never converts denied existing objects or failed listings to missing', async () => {
+  const denied = Object.assign(new Error('denied'), { $metadata: { httpStatusCode: 403 } });
+  for (const mode of ['exists', 'list-denied', 'list-unavailable', 'truncated', 'outside-prefix']) {
+    const store = load(async command => {
+      if (command.name === 'HeadObject') throw denied;
+      if (mode === 'list-denied') throw denied;
+      if (mode === 'list-unavailable') throw new Error('storage unavailable');
+      if (mode === 'truncated') return { IsTruncated: true };
+      return { Contents: [{ Key: mode === 'exists' ? 'uploads/id/file' : 'uploads/other/file' }] };
+    });
+    await assert.rejects(store.inspect('id', 'file'));
+  }
+});
+
+test('staging absence requires every listing page and rejects repeated cursors', async () => {
+  const denied = Object.assign(new Error('denied'), { $metadata: { httpStatusCode: 403 } });
+  for (const mode of ['absent', 'exists-later', 'repeated-cursor']) {
+    let pages = 0;
+    const store = load(async command => {
+      if (command.name === 'HeadObject') throw denied;
+      pages++;
+      if (pages === 1 || mode === 'repeated-cursor') return { Contents: [{ Key: 'uploads/id/file.backup' }], IsTruncated: true, NextContinuationToken: 'next' };
+      assert.equal(command.input.ContinuationToken, 'next');
+      return mode === 'exists-later' ? { Contents: [{ Key: 'uploads/id/file' }] } : {};
+    });
+    if (mode === 'absent') assert.equal(await store.inspect('id', 'file'), null);
+    else await assert.rejects(store.inspect('id', 'file'));
+    assert.equal(pages, 2);
+  }
+});
+
+test('successful HEAD, explicit not-found, and non-permission failures need no listing', async () => {
+  for (const status of [200,404,500]) {
+    let calls = 0;
+    const store = load(async command => {
+      calls++;
+      assert.equal(command.name, 'HeadObject');
+      if (status !== 200) throw Object.assign(new Error('HEAD failed'), { $metadata: { httpStatusCode: status } });
+      return { VersionId: 'pinned', ContentLength: 5, ContentType: 'text/html' };
+    });
+    if (status === 500) await assert.rejects(store.inspect('id', 'file'));
+    else if (status === 404) assert.equal(await store.inspect('id', 'file'), null);
+    else assert.equal((await store.inspect('id', 'file')).version, 'pinned');
+    assert.equal(calls, 1);
+  }
+});
