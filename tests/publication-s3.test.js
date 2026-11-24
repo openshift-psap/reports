@@ -27,6 +27,65 @@ test('control writes enforce create/update preconditions and do not swallow read
   await assert.rejects(store.get('control'), /denied/);
 });
 
+test('legacy revision 5 can be adopted and planned as revision 6 when absent documents return 403', async () => {
+  const { createPublication, controlKey } = require('../_infra/lambda-token-admin/publication');
+  const documents = new Map(), reads = [];
+  const denied = Object.assign(new Error('denied'), { $metadata: { httpStatusCode: 403 } });
+  const store = load(async ({ name, input }) => {
+    if (name === 'GetObject') {
+      reads.push(input.Key);
+      if (!documents.has(input.Key)) throw denied;
+      return { ETag: 'etag', Body: { transformToString: async () => JSON.stringify(documents.get(input.Key)) } };
+    }
+    if (name === 'ListObjectsV2') {
+      assert.equal(input.Bucket, 'reports');
+      assert.ok(reads.includes(input.Prefix), 'absence check must use the exact requested key');
+      return { Contents: [...documents.keys()].filter(key => key.startsWith(input.Prefix)).map(Key => ({ Key })) };
+    }
+    if (name === 'PutObject') { documents.set(input.Key, JSON.parse(input.Body)); return {}; }
+    if (name === 'GetBucketVersioning') return { Status: 'Enabled' };
+    throw new Error(`Unexpected ${name}`);
+  });
+  const service = createPublication({ store, domain: 'reports.example' });
+  const legacy = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', reportId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    version: 5, isLatest: true, authenticated: true, author: 'owner' };
+  assert.equal(await service.locate(legacy.id), null);
+  await service.adopt(legacy, 'owner', 'private/ci/legacy/');
+  const plan = await service.plan({ access: 'authenticated', files: [{ name: 'index.html', size: 5, contentType: 'text/html' }], entryFile: 'index.html' }, 'owner', legacy.id);
+  assert.equal(plan.uploads.length, 1);
+  const doc = documents.get(controlKey(legacy.reportId));
+  assert.equal(doc.head, legacy.id, 'planning must preserve the published legacy head');
+  assert.equal(doc.revisions[legacy.id].state, 'COMMITTED');
+  assert.equal(doc.revisions[plan.id].state, 'OPEN');
+  assert.equal(doc.revisions[plan.id].metadata.version, 6);
+  assert.equal(await service.locate(plan.id), legacy.reportId);
+});
+
+test('document reads prove absence without swallowing denied existing objects or listing failures', async () => {
+  const denied = Object.assign(new Error('denied'), { $metadata: { httpStatusCode: 403 } });
+  const Key = 'report-locators-v2/id.json';
+  for (const mode of ['absent', 'exists', 'exists-later', 'list-denied', 'list-unavailable', 'truncated', 'outside-prefix', 'repeated-cursor']) {
+    let pages = 0;
+    const store = load(async command => {
+      if (command.name === 'GetObject') throw denied;
+      assert.equal(command.name, 'ListObjectsV2');
+      assert.equal(command.input.Prefix, Key);
+      assert.equal(command.input.Bucket, 'reports');
+      pages++;
+      if (mode === 'list-denied') throw denied;
+      if (mode === 'list-unavailable') throw new Error('unavailable');
+      if (mode === 'truncated') return { IsTruncated: true };
+      if (mode === 'outside-prefix') return { Contents: [{ Key: 'other' }] };
+      if (mode === 'exists') return { Contents: [{ Key }] };
+      if (pages === 1 || mode === 'repeated-cursor') return { Contents: [{ Key: Key + '.backup' }], IsTruncated: true, NextContinuationToken: 'next' };
+      assert.equal(command.input.ContinuationToken, 'next');
+      return mode === 'exists-later' ? { Contents: [{ Key }] } : {};
+    });
+    if (mode === 'absent') assert.equal(await store.get(Key), null);
+    else await assert.rejects(store.get(Key));
+  }
+});
+
 test('version cleanup includes delete markers, pages, partial errors and final verification', async () => {
   for (const failure of [null, 'partial', 'remaining', 'throw']) {
     const calls = []; let lists = 0;
