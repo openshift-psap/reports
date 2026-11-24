@@ -225,9 +225,11 @@ class Release:
             raise ReleaseError('API artifact verification failed')
         resources = self.aws('apigateway', 'get-resources', '--rest-api-id', c['api_id'])['items']
         paths = {r['path']: r for r in resources}
-        if '/_admin-api/uploads' not in paths:
-            paths['/_admin-api/uploads'] = self.aws('apigateway', 'create-resource', '--rest-api-id', c['api_id'],
-                '--parent-id', paths['/_admin-api']['id'], '--path-part', 'uploads')
+        for name in ('session', 'uploads'):
+            path = '/_admin-api/' + name
+            if path not in paths:
+                paths[path] = self.aws('apigateway', 'create-resource', '--rest-api-id', c['api_id'],
+                    '--parent-id', paths['/_admin-api']['id'], '--path-part', name)
         for path, methods in {'/_admin-api/session': ['GET'], '/_admin-api/uploads': ['GET'],
                               '/_admin-api/reports': ['GET', 'POST', 'PATCH', 'DELETE'],
                               '/_admin-api/reports/{id}/complete': ['POST']}.items():
