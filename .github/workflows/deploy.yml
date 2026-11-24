@@ -1,9 +1,15 @@
-name: Deploy PSAP Reports Site
+name: Deploy PSAP Reports Full Stack
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      upload_mode:
+        description: 'Production issuance mode (preserve is the normal release)'
+        type: choice
+        options: [preserve, paused, v2]
+        default: preserve
 
 permissions:
   contents: read
@@ -11,7 +17,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: psap-reports-full-stack
   cancel-in-progress: false
 
 jobs:
@@ -22,7 +28,9 @@ jobs:
 
   build-and-deploy:
     needs: tests
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     # Retained as the OIDC-protected deployment environment. This does not
     # publish GitHub Pages; the hub itself is deployed only to S3/CloudFront.
     environment:
@@ -34,14 +42,29 @@ jobs:
         with:
           python-version: '3.12'
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Configure AWS credentials through GitHub OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::194365112018:role/github-actions-psap-reports-deploy
           aws-region: us-east-1
 
-      - name: Install AWS CLI
-        run: pip install -q awscli
+      - name: Install release validation tools
+        run: pip install -q awscli cfn-lint
+
+      - name: Validate publication infrastructure
+        run: cfn-lint _infra/publication-stack.json
+
+      - name: Deploy and exercise isolated validation environment
+        run: python3 _infra/validate-release.py --commit "$GITHUB_SHA" --evidence validation-release.json
+
+      - name: Deploy production backend and verify readiness
+        env:
+          UPLOAD_MODE: ${{ inputs.upload_mode || 'preserve' }}
+        run: python3 _infra/release.py --target production --commit "$GITHUB_SHA" --upload-mode "$UPLOAD_MODE" --evidence backend-release.json
 
       - name: Generate the report hub shell
         run: python3 _generator/generate_index.py
@@ -55,7 +78,24 @@ jobs:
           aws s3 cp public-reports.json "s3://${BUCKET}/public-reports.json" --content-type application/json --cache-control no-store
 
       - name: Invalidate the report hub shell and privacy page
-        run: aws cloudfront create-invalidation --distribution-id E3URYTY8ICV8ON --paths / /index.html /admin/index.html /public-reports.json /privacy.html
+        run: |
+          ID=$(aws cloudfront create-invalidation --distribution-id E3URYTY8ICV8ON --paths / /index.html /admin/index.html /public-reports.json /privacy.html --query Invalidation.Id --output text)
+          aws cloudfront wait invalidation-completed --distribution-id E3URYTY8ICV8ON --id "$ID"
+
+      - name: Verify production frontend and API (read-only)
+        run: python3 _infra/release.py --target production --phase smoke --commit "$GITHUB_SHA" --evidence frontend-release.json
+
+      - name: Retain sanitized release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.sha }}
+          path: |
+            validation-release.json
+            backend-release.json
+            frontend-release.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       # Preserve old GitHub Pages bookmarks without hosting report data there.
       - name: Publish legacy Pages redirect

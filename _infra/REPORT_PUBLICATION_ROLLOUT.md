@@ -66,6 +66,10 @@ updated scoped IAM policy before deploying this adapter.
 
 ## Deployment sequence — separate authorization required
 
+For routine releases, use the [full-stack workflow](FULL_STACK_DEPLOYMENT.md)
+after its one-time OIDC permissions and Secrets Manager setup. The sequence below
+also describes the ordering required for an authorized manual rollout.
+
 1. Inventory actual report-bucket policies, versioning, Object Lock, replication,
    origins/cache behaviors, quotas, and API/edge roles. Staging must be in the
    report bucket's region and must not be an origin. Resolve retention settings
@@ -77,8 +81,8 @@ updated scoped IAM policy before deploying this adapter.
 3. Deploy the stack with existing report bucket/role names. It adds scoped
    policies rather than replacing existing ones. The schedule and alarm actions
    start disabled (`CleanupEnabled=false`, `CleanupNotificationsEnabled=false`).
-   Connect the alarms to the team's notification channel; template alarms have
-   no notification destination until that integration is configured.
+   Supply `AlarmTopicArn` for the team's notification channel. The template owns
+   that destination; leaving the parameter empty configures no notification delivery.
 4. Deploy the new authorizer to **every** relevant cache behavior and wait for
    distribution deployment. Its role needs the control-read policy. Verify raw
    and encoded control/physical paths are denied even for signed-in owners;
@@ -91,10 +95,10 @@ updated scoped IAM policy before deploying this adapter.
    readable.
 6. Enable `CleanupEnabled=true` while keeping `CleanupNotificationsEnabled=false`.
    Confirm the worker heartbeat/full scan and healthy alarm states, then set
-   `CleanupNotificationsEnabled=true`. Updating an alarm rewrites its configuration
-   and can clear a notification destination attached outside the template. After
-   this and any later alarm configuration update, verify the destination on every
-   cleanup alarm and reattach any missing destination before relying on alerts.
+   `CleanupNotificationsEnabled=true`. After this and any later alarm configuration
+   update, verify the destination on every cleanup alarm before relying on alerts.
+   Updating an alarm can clear a destination attached outside the template; recover
+   by setting `AlarmTopicArn` rather than relying on an out-of-band attachment.
    Deploy the generated hub. Validate in isolated AWS resources with explicit
    approval for test uploads and deletions.
 7. Set API mode `v2` only after validation passes. Never enable issuance without

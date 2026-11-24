@@ -1,0 +1,38 @@
+{
+  "production": {
+    "account": "194365112018",
+    "region": "us-east-1",
+    "stack": "psap-reports-publication-v2",
+    "bucket": "psap-reports",
+    "artifact_bucket": "psap-reports-publication-artifacts-194365112018-us-east-1",
+    "api_function": "psap-reports-token-admin",
+    "api_role": "psap-reports-token-admin-role",
+    "edge_function": "psap-reports-auth",
+    "edge_role": "psap-reports-lambda-edge-role",
+    "distribution": "E3URYTY8ICV8ON",
+    "domain": "reports.psap.aws.rhperfscale.org",
+    "api_id": "s3xe2w49g5",
+    "stage": "prod",
+    "secret_id": "psap-reports/deployment-auth",
+    "alarm_topic": "arn:aws:sns:us-east-1:194365112018:psap-reports-publication-alerts",
+    "metric_namespace": "PSAP/Publication"
+  },
+  "validation": {
+    "account": "194365112018",
+    "region": "us-east-1",
+    "stack": "psap-reports-publication-v2-validation",
+    "bucket": "psap-reports-v2-validation-194365112018-us-east-1",
+    "artifact_bucket": "psap-reports-publication-artifacts-194365112018-us-east-1",
+    "api_function": "psap-reports-v2-validation-api",
+    "api_role": "psap-reports-v2-validation-api-role",
+    "edge_function": "psap-reports-v2-validation-edge",
+    "edge_role": "psap-reports-v2-validation-edge-role",
+    "distribution": "ENFXKXLUGP5HS",
+    "domain": "d3at61yx2971en.cloudfront.net",
+    "api_id": "z2xr2henf0",
+    "stage": "validation",
+    "secret_id": "psap-reports/validation-auth",
+    "alarm_topic": "arn:aws:sns:us-east-1:194365112018:psap-reports-publication-alerts",
+    "metric_namespace": "PSAP/PublicationValidation"
+  }
+}
