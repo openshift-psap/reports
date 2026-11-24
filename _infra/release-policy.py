@@ -53,6 +53,9 @@ def policy():
             roles = [f'arn:aws:iam::{account}:role/' + name for name in (c['api_role'], c['edge_role'], ids['WorkerRole'])]
             allow(['iam:GetRole', 'iam:GetRolePolicy', 'iam:ListRolePolicies', 'iam:ListAttachedRolePolicies',
                    'iam:PutRolePolicy', 'iam:DeleteRolePolicy'], roles)
+            # CloudFormation owns only the worker role; API/edge roles are external.
+            allow(['iam:ListRoleTags', 'iam:TagRole', 'iam:UntagRole'],
+                  [f"arn:aws:iam::{account}:role/{ids['WorkerRole']}"])
             allow(['iam:PassRole'], roles, Condition={'StringEquals': {'iam:PassedToService': 'lambda.amazonaws.com'}})
             allow(['cloudformation:DescribeStacks', 'cloudformation:DescribeStackEvents', 'cloudformation:DescribeStackResources',
                    'cloudformation:GetTemplate', 'cloudformation:GetTemplateSummary', 'cloudformation:CreateChangeSet', 'cloudformation:ExecuteChangeSet',

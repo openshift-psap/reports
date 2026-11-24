@@ -176,10 +176,13 @@ class Release:
                     metric['MetricNamespace'] = c['metric_namespace']
         self.file('publication.json', template)
         parameters = {k: v for k, v in parameters.items() if k in template['Parameters']}
+        current = self.aws('cloudformation', 'describe-stacks', '--stack-name', c['stack'])['Stacks'][0]
+        tags = [f"{tag['Key']}={tag['Value']}" for tag in current.get('Tags', [])]
         # deploy handles an empty change set, unlike update-stack.
         self.aws('cloudformation', 'deploy', '--stack-name', c['stack'], '--template-file', str(self.work / 'publication.json'),
                  '--parameter-overrides', *[f'{k}={v}' for k, v in parameters.items()],
-                 '--capabilities', 'CAPABILITY_IAM', '--no-fail-on-empty-changeset')
+                 '--capabilities', 'CAPABILITY_IAM', '--no-fail-on-empty-changeset',
+                 *(['--tags', *tags] if tags else []))
         self.parameters = parameters
         stack = self.aws('cloudformation', 'describe-stacks', '--stack-name', c['stack'])['Stacks'][0]
         self.outputs = {o['OutputKey']: o['OutputValue'] for o in stack['Outputs']}

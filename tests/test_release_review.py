@@ -167,6 +167,11 @@ class ReleaseReviewTests(unittest.TestCase):
         grants = [s for s in document['Statement'] if 'cloudformation:GetTemplateSummary' in s['Action']]
         self.assertEqual(len(grants), 2)
         self.assertTrue(all('*' not in s['Resource'] and any(':stack/' in arn for arn in s['Resource']) for s in grants))
+        tagging = [s for s in document['Statement'] if 'iam:TagRole' in s['Action']]
+        self.assertEqual(len(tagging), 2)
+        for grant in tagging:
+            self.assertEqual(grant['Resource'], ['arn:aws:iam::194365112018:role/worker-role'])
+            self.assertEqual(set(grant['Action']), {'iam:ListRoleTags', 'iam:TagRole', 'iam:UntagRole'})
 
 
 if __name__ == '__main__':

@@ -69,6 +69,15 @@ control-record writes and version listings are restricted to the isolated bucket
 Stack resource replacement may require a new inventory and separately reviewed
 permissions. The existing Lambda@Edge service-linked roles must already exist.
 
+CloudFormation also needs `iam:ListRoleTags`, `iam:TagRole`, and `iam:UntagRole`
+on its worker role. The generator scopes these actions to that role, not the
+externally managed API/edge roles. Releases explicitly preserve current stack
+tags: omitting `--tags` from `aws cloudformation deploy` can request their removal.
+Installations bootstrapped from PR #27 need this worker-tagging permission addition
+reviewed and applied before retrying. If an earlier attempt reached
+`UPDATE_ROLLBACK_FAILED`, an authorized operator must finish rollback first;
+do not skip resources just to bypass a missing permission.
+
 Preserve the role's repository/environment-specific OIDC trust. Protect the
 `github-pages` environment and `main` so unreviewed branches cannot use these
 permissions. Dispatches from other branches are blocked in the workflow.
