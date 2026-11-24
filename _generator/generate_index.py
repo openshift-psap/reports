@@ -964,10 +964,15 @@ async function revokeToken(prefix) {
       const error = await result.json().catch(() => ({}));
       throw new Error(error.error || `Token revocation failed (${result.status}).`);
     }
-    const resp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
-    if (!resp.ok) throw new Error("Token revoked, but the list could not be refreshed. Refresh the hub.");
-    const data = await resp.json();
-    renderTokenTable(data.tokens);
+    try {
+      const resp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
+      if (!resp.ok) throw new Error("Refresh failed");
+      const data = await resp.json();
+      renderTokenTable(data.tokens);
+    } catch (_) {
+      document.getElementById("token-tbody").innerHTML = '<tr><td colspan="7">Token revoked. Refresh the hub to reload the token list.</td></tr>';
+      alert("Token revoked, but the list could not be refreshed. Refresh the hub.");
+    }
   } catch (error) {
     alert(error.message || "Token revocation could not be confirmed. Refresh the hub and retry.");
   }

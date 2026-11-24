@@ -49,7 +49,17 @@ test('UI shows DELETE failures without silently refreshing the list', async () =
 });
 
 test('UI distinguishes successful revocation from a failed list refresh', async () => {
-  const f = setup([{ ok: true }, { ok: false }]);
-  await f.context.revokeToken('synthetic');
-  assert.match(f.alerts[0], /Token revoked, but the list could not be refreshed/);
+  for (const response of [
+    { ok: false },
+    new Error('Network failed'),
+    { ok: true, json: async () => { throw new Error('Invalid JSON'); } },
+    { ok: true, json: async () => ({ tokens: null }) },
+  ]) {
+    const f = setup([{ ok: true }, response]);
+    f.tbody.innerHTML = '<button>Revoke</button>';
+    await f.context.revokeToken('synthetic');
+    assert.match(f.alerts[0], /Token revoked, but the list could not be refreshed/);
+    assert.doesNotMatch(f.tbody.innerHTML, /<button/);
+    assert.equal(f.calls.length, 2, 'never retry the successful DELETE');
+  }
 });
