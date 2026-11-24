@@ -40,6 +40,15 @@ test('API staging lookup lists only the managed upload namespace', () => {
   assert.deepEqual(statement.Action, ['s3:ListBucket']);
 });
 
+test('API can prove missing locators with prefix-scoped listing only', () => {
+  const statements = template.Resources.ApiPublicationPolicy.Properties.PolicyDocument.Statement;
+  const statement = statements.find(s => s.Condition?.StringLike?.['s3:prefix']?.includes('report-locators-v2/*'));
+  assert.ok(statement, 'Missing locator absence-check permission');
+  assert.deepEqual(statement.Action, ['s3:ListBucket']);
+  assert.deepEqual(statement.Condition, { StringLike: { 's3:prefix': ['report-locators-v2/*'] } });
+  assert.deepEqual(statement.Resource, { 'Fn::Sub': 'arn:${AWS::Partition}:s3:::${ReportBucket}' });
+});
+
 test('notification destinations are managed by the template across readiness updates', () => {
   assert.equal(template.Parameters.AlarmTopicArn.Default, '');
   for (const topic of ['', 'arn:aws:sns:us-east-1:123456789012:alerts']) {

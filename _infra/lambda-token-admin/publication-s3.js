@@ -8,6 +8,23 @@ const missing = error => error.$metadata?.httpStatusCode === 404 || ['NoSuchKey'
 
 function createStore({ s3, bucket, stagingBucket }) {
   const send = (name, input) => s3.send(new sdk[`${name}Command`](input));
+  async function confirmAbsent(Bucket, Key, error) {
+    if (missing(error)) return null;
+    if (error.$metadata?.httpStatusCode !== 403) throw error;
+    // Prefix-scoped ListBucket rights can make a missing GET/HEAD return 403.
+    // Only an authorized, complete exact-prefix listing can prove absence.
+    let ContinuationToken;
+    const seen = new Set();
+    do {
+      const page = await send('ListObjectsV2', { Bucket, Prefix: Key, MaxKeys: 1000, ContinuationToken });
+      const objects = page.Contents || [];
+      if (objects.some(object => !object.Key?.startsWith(Key) || object.Key === Key)) throw error;
+      if (page.IsTruncated && (!page.NextContinuationToken || seen.has(page.NextContinuationToken))) throw error;
+      ContinuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+      if (ContinuationToken) seen.add(ContinuationToken);
+    } while (ContinuationToken);
+    return null;
+  }
   async function digest(input) {
     const response = await send('GetObject', input);
     const hash = crypto.createHash('sha256');
@@ -41,7 +58,7 @@ function createStore({ s3, bucket, stagingBucket }) {
         const value = JSON.parse(await response.Body.transformToString());
         if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid stored document root');
         return { value, etag: response.ETag };
-      } catch (error) { if (missing(error)) return null; throw error; }
+      } catch (error) { return confirmAbsent(bucket, Key, error); }
     },
     async put(Key, value, etag) {
       await send('PutObject', { Bucket: bucket, Key, Body: JSON.stringify(value), ContentType: 'application/json', CacheControl: 'no-store',
@@ -66,20 +83,7 @@ function createStore({ s3, bucket, stagingBucket }) {
         const result = await send('HeadObject', { Bucket: stagingBucket, Key });
         return { version: result.VersionId, size: result.ContentLength, contentType: result.ContentType };
       } catch (error) {
-        if (missing(error)) return null;
-        if (error.$metadata?.httpStatusCode !== 403) throw error;
-        // A missing key can return 403 with prefix-scoped ListBucket rights.
-        // Prove absence with an authorized listing; never reinterpret denial
-        // of an existing object (or of the listing itself) as a missing file.
-        let ContinuationToken;
-        do {
-          const page = await send('ListObjectsV2', { Bucket: stagingBucket, Prefix: Key, MaxKeys: 1000, ContinuationToken });
-          const objects = page.Contents || [];
-          if (objects.some(object => !object.Key?.startsWith(Key) || object.Key === Key)) throw error;
-          if (page.IsTruncated && (!page.NextContinuationToken || page.NextContinuationToken === ContinuationToken)) throw error;
-          ContinuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
-        } while (ContinuationToken);
-        return null;
+        return confirmAbsent(stagingBucket, Key, error);
       }
     },
     async copyVerified(id, file, prefix) {
