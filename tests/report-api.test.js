@@ -90,6 +90,39 @@ function setup(overrides = {}, { reportId = id, listings = {}, onSend = () => un
 
 const metadata = { action: 'metadata', title: 'New title', category: 'benchmarks', description: 'Updated', tags: ['rhoai', 'gpu'] };
 
+test('listed legacy and hashed tokens revoke individually without using the display label', async () => {
+  for (const hashed of [false, true]) {
+    const api = setup();
+    const token = 'psap_rht_synthetic_token_for_test';
+    const key = hashed ? `sha256:${crypto.createHash('sha256').update(token).digest('hex')}` : token;
+    const other = 'psap_rht_other_synthetic_token';
+    api.objects.set('tokens.json', { tokens: { [key]: { active: true, ...(hashed ? { prefix: token.slice(0, 20) } : {}) }, [other]: { active: true } } });
+    const listed = await api.request(undefined, { method: 'GET', path: '/tokens' });
+    const entry = listed.data.tokens[0];
+    assert.equal(entry.revokePrefix, token.slice(0, 20));
+    assert.equal(entry.id, entry.revokePrefix + '...');
+    const result = await api.request({ prefix: entry.revokePrefix }, { method: 'DELETE', path: '/tokens' });
+    assert.equal(result.statusCode, 200);
+    assert.equal(result.data.revoked, 1);
+    assert.equal(api.objects.get('tokens.json').tokens[key].active, false);
+    assert.equal(api.objects.get('tokens.json').tokens[other].active, true);
+    assert.equal((await api.request(undefined, { method: 'GET', path: '/tokens' })).data.tokens[0].active, false);
+  }
+});
+
+test('revocation rejects short or ambiguous prefixes without writes and accepts old display labels', async () => {
+  const api = setup();
+  const first = 'psap_rht_shared_token_A', second = 'psap_rht_shared_token_B';
+  api.objects.set('tokens.json', { tokens: { [first]: { active: true }, [second]: { active: true } } });
+  for (const [prefix, status] of [['psap_', 404], [first.slice(0, 20), 409]]) {
+    const result = await api.request({ prefix }, { method: 'DELETE', path: '/tokens' });
+    assert.equal(result.statusCode, status);
+  }
+  assert.equal(api.calls.filter(c => c.name === 'PutObjectCommand').length, 0);
+  api.objects.set('tokens.json', { tokens: { [first]: { active: true } } });
+  assert.equal((await api.request({ prefix: first.slice(0, 20) + '...' }, { method: 'DELETE', path: '/tokens' })).statusCode, 200);
+});
+
 test('adopting and replacing legacy current revision preserves deduplicated history counts', async () => {
   const f = require('./helpers/publication-fixture').fixture();
   const api = setup({}, { publication: f.service });

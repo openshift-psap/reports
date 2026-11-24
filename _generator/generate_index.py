@@ -947,21 +947,35 @@ function renderTokenTable(tokens) {
     <td style="padding:0.4rem">${escHtml(t.note)}</td>
     <td style="padding:0.4rem">${escHtml(t.created)}</td>
     <td style="padding:0.4rem">${escHtml(t.expires ? t.expires.slice(0, 10) : "Never")}</td>
-    <td style="padding:0.4rem"><span style="color:${t.active ? 'var(--badge-final)' : 'var(--badge-archived)'}">${t.active ? 'Active' : (t.expires ? 'Expired' : 'Revoked')}</span></td>
-    <td style="padding:0.4rem">${t.active ? `<button onclick="revokeToken('${escHtml(t.id)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer;color:var(--text-secondary)">Revoke</button>` : ''}</td>
+    <td style="padding:0.4rem"><span style="color:${t.active ? 'var(--badge-final)' : 'var(--badge-archived)'}">${t.active ? 'Active' : (t.expires && Date.parse(t.expires) <= Date.now() ? 'Expired' : 'Revoked')}</span></td>
+    <td style="padding:0.4rem">${t.active ? `<button onclick="revokeToken('${escHtml(t.revokePrefix || t.id)}')" style="padding:0.2rem 0.5rem;background:none;border:1px solid var(--border);border-radius:4px;font-size:0.7rem;cursor:pointer;color:var(--text-secondary)">Revoke</button>` : ''}</td>
   </tr>`).join("");
 }
 
 async function revokeToken(prefix) {
   if (!confirm(`Revoke token ${prefix}?`)) return;
-  await fetch(`${TOKEN_API}/tokens`, {
-    method: "DELETE", credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prefix }),
-  });
-  const resp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
-  const data = await resp.json();
-  renderTokenTable(data.tokens);
+  try {
+    const result = await fetch(`${TOKEN_API}/tokens`, {
+      method: "DELETE", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prefix }),
+    });
+    if (!result.ok) {
+      const error = await result.json().catch(() => ({}));
+      throw new Error(error.error || `Token revocation failed (${result.status}).`);
+    }
+    try {
+      const resp = await fetch(`${TOKEN_API}/tokens`, { credentials: "include" });
+      if (!resp.ok) throw new Error("Refresh failed");
+      const data = await resp.json();
+      renderTokenTable(data.tokens);
+    } catch (_) {
+      document.getElementById("token-tbody").innerHTML = '<tr><td colspan="7">Token revoked. Refresh the hub to reload the token list.</td></tr>';
+      alert("Token revoked, but the list could not be refreshed. Refresh the hub.");
+    }
+  } catch (error) {
+    alert(error.message || "Token revocation could not be confirmed. Refresh the hub and retry.");
+  }
 }
 
 init();

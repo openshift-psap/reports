@@ -594,6 +594,7 @@ async function handle(event) {
     const data = await getTokens();
     const redacted = Object.entries(data.tokens).map(([token, info]) => ({
       id: tokenPrefix(token, info) + '...',
+      revokePrefix: tokenPrefix(token, info),
       group: info.group || 'everyone',
       note: info.note || '',
       created: info.created || '',
@@ -633,20 +634,17 @@ async function handle(event) {
   if (method === 'DELETE' && isTokensPath) {
     let body = {};
     try { body = JSON.parse(event.body || '{}'); } catch (e) {}
-    const prefix = body.prefix || '';
+    // Accept the old UI's display suffix during rolling frontend updates.
+    const prefix = typeof body.prefix === 'string' ? body.prefix.replace(/\.\.\.$/, '') : '';
     if (!prefix) return response(400, { error: 'Missing prefix' }, origin);
 
     const data = await getTokens();
-    let revoked = 0;
-    for (const [token, info] of Object.entries(data.tokens)) {
-      if (tokenPrefix(token, info).startsWith(prefix) && tokenIsActive(info)) {
-        info.active = false;
-        revoked++;
-      }
-    }
-    if (revoked === 0) return response(404, { error: 'No matching active tokens' }, origin);
+    const matches = Object.entries(data.tokens).filter(([token, info]) => tokenPrefix(token, info) === prefix && tokenIsActive(info));
+    if (matches.length === 0) return response(404, { error: 'No matching active tokens' }, origin);
+    if (matches.length > 1) return response(409, { error: 'Token prefix is ambiguous; contact the report hub administrator' }, origin);
+    matches[0][1].active = false;
     await putTokens(data);
-    return response(200, { revoked }, origin);
+    return response(200, { revoked: 1 }, origin);
   }
 
   return response(404, { error: 'Not found' }, origin);
