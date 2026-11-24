@@ -107,16 +107,19 @@ class ReleaseTests(unittest.TestCase):
             r = Release('validation', work, 'a'*40)
             r.artifact_key = 'publication/test.zip'
             r.parameters = {'CleanupEnabled': 'false', 'CleanupNotificationsEnabled': 'false', 'ReportBucket': r.config['bucket']}
-            r.aws = Mock(side_effect=[{}, {'Stacks': [{'Outputs': [{'OutputKey': 'StagingBucket', 'OutputValue': 'isolated'}]}]}])
+            r.aws = Mock(side_effect=[{'Stacks': [{'Tags': [{'Key': 'Purpose', 'Value': 'isolated validation'}]}]},
+                                     {}, {'Stacks': [{'Outputs': [{'OutputKey': 'StagingBucket', 'OutputValue': 'isolated'}]}]}])
             r.infrastructure()
             template = json.loads((Path(work) / 'publication.json').read_text())
             for resource in template['Resources'].values():
                 if resource['Type'] == 'AWS::CloudWatch::Alarm':
                     self.assertEqual(resource['Properties']['Namespace'], 'PSAP/PublicationValidation')
                     self.assertIn('AlarmActions', resource['Properties'])
-            command = r.aws.call_args_list[0].args
+            command = r.aws.call_args_list[1].args
             self.assertIn('CleanupEnabled=false', command)
             self.assertIn('CleanupNotificationsEnabled=false', command)
+            self.assertIn('--tags', command)
+            self.assertIn('Purpose=isolated validation', command)
 
     def test_rendered_auth_is_not_the_retained_s3_artifact(self):
         with tempfile.TemporaryDirectory() as checkout, tempfile.TemporaryDirectory() as work:
