@@ -94,8 +94,16 @@ permissions. Dispatches from other branches are blocked in the workflow.
    These samples are not sustained-throughput or seven-day elapsed-retention proof.
 6. Delete only this run's synthetic IDs and verify their prefixes have no object
    versions/delete markers. Retain control records for late-write reconciliation.
-   Pause isolated issuance and disable its schedule/notification readiness even
-   after test failure. Record fixture IDs if cleanup cannot finish.
+   Pause isolated issuance even after test failure. Allow in-flight completions
+   up to three minutes to settle; reread their state and delete any committed
+   synthetic revision. Reconciliation can advance over multiple invocations
+   (at most 20 attempts within a 30-minute invocation-start budget). Each worker
+   call has a 960-second socket/process timeout, exceeding its 900-second runtime;
+   no new invocation starts without that much budget remaining. Verify terminal
+   revision states and empty prefixes before disabling the isolated schedule.
+   If settling, cleanup, or pausing fails, retain fixture IDs and keep scheduled
+   reconciliation enabled with notification readiness off. The release still fails;
+   a late committed synthetic report requires owner deletion on recovery.
 7. Only after isolated success, deploy production backend in the same order.
    Normal pushes preserve the deployed upload mode. Readiness failure blocks
    frontend deployment and explicit V2 enablement.
@@ -134,7 +142,9 @@ The `release-<commit>` workflow artifact contains only the allowlisted
 `validation-release.json`, `backend-release.json`, and `frontend-release.json`.
 Together with the Actions job result, these identify the source commit, API
 artifact SHA/key, edge version, completed stages, measured isolated latencies,
-and fixture IDs. A failed stage does not produce a successful full-stack release.
+and fixture IDs. Known sanitized validation/cleanup failure reasons are retained;
+unexpected exceptions and raw service responses remain redacted. A failed stage
+does not produce a successful full-stack release.
 
 On failure, downstream steps stop. Existing production mode is preserved; the
 workflow does not silently pause a live installation or revert its edge version.
@@ -142,6 +152,10 @@ Inspect the failed stage and AWS service state, fix the cause, and rerun the
 workflow for reviewed `main`. A rerun packages the same source and creates another
 immutable edge version. Concurrent operator API-environment changes are detected
 rather than overwritten.
+
+`UPDATE_ROLLBACK_COMPLETE` is accepted for a retry after a successful CloudFormation
+update rollback. In-progress operations, failed rollbacks, and failed initial
+creation remain blocked for operator recovery.
 
 If issuance must be paused urgently, use the authorized operator procedure in
 [the rollout guide](REPORT_PUBLICATION_ROLLOUT.md#recovery-and-rollback); a workflow

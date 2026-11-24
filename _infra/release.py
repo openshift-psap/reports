@@ -19,6 +19,7 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKER_WAIT_SECONDS = 960
 
 
 class ReleaseError(Exception):
@@ -55,8 +56,11 @@ class Release:
         self.secret = None
 
     def aws(self, *args):
+        if args[:2] == ('lambda', 'invoke'):
+            args = (*args, '--cli-read-timeout', str(WORKER_WAIT_SECONDS))
         result = subprocess.run(['aws', *args, '--region', self.config['region'], '--output', 'json'],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True,
+                                timeout=WORKER_WAIT_SECONDS if args[:2] == ('lambda', 'invoke') else None)
         if result.returncode:
             # stderr may contain request parameters, including credentials.
             raise ReleaseError(f'AWS {args[0]} {args[1]} failed; inspect AWS service state')
@@ -80,7 +84,7 @@ class Release:
             raise ReleaseError('Wrong AWS account')
         self.api = self.aws('lambda', 'get-function-configuration', '--function-name', c['api_function'])
         self.stack = self.aws('cloudformation', 'describe-stacks', '--stack-name', c['stack'])['Stacks'][0]
-        if self.stack['StackStatus'] not in ('CREATE_COMPLETE', 'UPDATE_COMPLETE'):
+        if self.stack['StackStatus'] not in ('CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE'):
             raise ReleaseError('Publication stack is not ready for a release')
         secret = self.aws('secretsmanager', 'get-secret-value', '--secret-id', c['secret_id'])
         self.secret = json.loads(secret['SecretString'])

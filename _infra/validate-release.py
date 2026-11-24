@@ -12,7 +12,16 @@ import time
 import urllib.parse
 import urllib.request
 
-from release import Release, ReleaseError
+from release import Release, ReleaseError, WORKER_WAIT_SECONDS
+
+CLEANUP_SECONDS = 1800
+CLEANUP_ATTEMPTS = 20
+
+
+def failure(r, stage, error):
+    reason = str(error) if isinstance(error, ReleaseError) else 'Unexpected error; raw diagnostics redacted'
+    r.evidence.setdefault('failures', []).append({'stage': stage, 'reason': reason})
+    print(stage + ': ' + reason, flush=True)
 
 
 class Validation:
@@ -69,7 +78,9 @@ class Validation:
                              '--key', 'report-control-v2/' + root + '.json', str(path))
         return json.loads(path.read_text()), metadata['ETag'], path
 
-    def worker(self):
+    def worker(self, deadline=None):
+        if deadline is not None and deadline - time.monotonic() < WORKER_WAIT_SECONDS:
+            raise ReleaseError('Cleanup time budget exhausted; reconciliation must remain enabled')
         result = self.r.aws('lambda', 'invoke', '--function-name', self.r.outputs['CleanupFunction'], str(self.r.work / 'validation-worker.json'))
         if result.get('FunctionError'):
             raise ReleaseError('Synthetic cleanup failed')
@@ -89,12 +100,22 @@ class Validation:
         self.r.aws('s3api', 'put-object', '--bucket', self.r.config['bucket'], '--key', 'report-control-v2/' + root + '.json',
                    '--body', str(path), '--if-match', etag, '--content-type', 'application/json')
 
-    def check_empty(self, plan):
+    def is_empty(self, plan):
         for bucket, prefix in [(self.r.outputs['StagingBucket'], 'uploads/' + plan['id'] + '/'),
                                (self.r.config['bucket'], 'report-objects-v2/' + plan['id'] + '/')]:
             result = self.r.aws('s3api', 'list-object-versions', '--bucket', bucket, '--prefix', prefix)
             if result.get('Versions') or result.get('DeleteMarkers'):
-                raise ReleaseError('Synthetic fixture versions remain')
+                return False
+        return True
+
+    def reconcile_until_empty(self, plans):
+        deadline = time.monotonic() + CLEANUP_SECONDS
+        for _ in range(CLEANUP_ATTEMPTS):
+            self.worker(deadline)
+            if all(self.is_empty(plan) for plan in plans):
+                return
+            time.sleep(2)
+        raise ReleaseError('Synthetic fixture versions remain after bounded reconciliation')
 
     def run(self):
         missing = self.plan()
@@ -104,9 +125,9 @@ class Validation:
             raise ReleaseError('Incomplete upload validation failed')
         if self.r.request('/public/v2/' + missing['id'] + '/' + missing['id'] + '/site/index.html')[0] != 404:
             raise ReleaseError('Incomplete upload became visible')
-        self.expire(missing['root']); self.worker(); self.check_empty(missing)
+        self.expire(missing['root']); self.reconcile_until_empty([missing])
         self.put(missing, 'site/index.html')  # still-valid URL after prior verified cleanup
-        self.expire(missing['root']); self.worker(); self.check_empty(missing)
+        self.expire(missing['root']); self.reconcile_until_empty([missing])
         self.r.record('isolated-late-write', incompleteDenied=True, expiredAndLateVersionsRemoved=True)
 
         for access in ('public', 'authenticated'):
@@ -163,21 +184,63 @@ class Validation:
 
     def cleanup(self):
         # Only IDs recorded by this run are eligible; never scan/delete other reports.
-        for root in self.roots:
-            doc, _, _ = self.control(root)
-            if doc['owner'] != 'publication-release-verifier':
-                raise ReleaseError('Fixture ownership changed')
-            for revision in doc['revisions'].values():
-                if revision['state'] in ('COMMITTED', 'DELETING'):
-                    access = 'authenticated' if revision['metadata']['authenticated'] else 'public'
-                    status, _ = self.api('/reports?' + urllib.parse.urlencode({'id': revision['id'], 'access': access}), 'DELETE')
-                    if status != 200:
-                        raise ReleaseError('Fixture deletion failed; retain IDs for recovery')
-            self.expire(root)
-        self.worker()
-        for plan in self.plans:
-            self.check_empty(plan)
-        self.r.record('isolated-cleanup', reports=len(self.plans), remainingVersions=0)
+        deadline = time.monotonic() + CLEANUP_SECONDS
+        settle_deadline = min(deadline, time.monotonic() + 180)
+        for _ in range(CLEANUP_ATTEMPTS):
+            for root in self.roots:
+                while True:
+                    doc, _, _ = self.control(root)
+                    if doc['owner'] != 'publication-release-verifier':
+                        raise ReleaseError('Fixture ownership changed')
+                    preparing = [v for v in doc['revisions'].values() if v['state'] == 'PREPARING']
+                    if not any(v['leaseUntil'] > time.time()*1000 for v in preparing):
+                        break
+                    if time.monotonic() >= settle_deadline:
+                        raise ReleaseError('In-flight completion did not settle; reconciliation must remain enabled')
+                    time.sleep(5)
+                for revision in doc['revisions'].values():
+                    if revision['state'] in ('COMMITTED', 'DELETING'):
+                        access = 'authenticated' if revision['metadata']['authenticated'] else 'public'
+                        status, _ = self.api('/reports?' + urllib.parse.urlencode({'id': revision['id'], 'access': access}), 'DELETE')
+                        if status != 200:
+                            raise ReleaseError('Fixture deletion failed; retain IDs for recovery')
+                self.expire(root)
+            self.worker(deadline)
+            # Empty prefixes alone do not prove an in-flight publication has stopped.
+            terminal = True
+            for root in self.roots:
+                doc, _, _ = self.control(root)
+                if doc['owner'] != 'publication-release-verifier':
+                    raise ReleaseError('Fixture ownership changed')
+                terminal = terminal and all(v['state'] in ('ABORTED', 'DELETED') for v in doc['revisions'].values())
+            if terminal and all(self.is_empty(plan) for plan in self.plans):
+                self.r.record('isolated-cleanup', reports=len(self.plans), remainingVersions=0)
+                return
+            time.sleep(2)
+        raise ReleaseError('Synthetic cleanup did not finish within reconciliation bound')
+
+
+def finalize(r, tests):
+    failed = False
+    try:
+        r.set_mode('paused')
+    except Exception as error:
+        failed = True
+        failure(r, 'isolated-pause', error)
+    cleaned = False
+    try:
+        tests.cleanup()
+        cleaned = True
+    except Exception as error:
+        failed = True
+        failure(r, 'isolated-cleanup', error)
+    try:
+        # Leave retries running when a completion or physical deletion is unresolved.
+        r.infrastructure(schedule=not cleaned or failed, notifications=False)
+    except Exception as error:
+        failed = True
+        failure(r, 'isolated-schedule', error)
+    return failed
 
 
 def main():
@@ -195,22 +258,12 @@ def main():
         try:
             r.deploy('v2')
             tests.run()
-        except Exception:
+        except Exception as error:
             failed = True
-            print('Isolated release validation failed; production deployment blocked.', flush=True)
+            failure(r, 'isolated-validation', error)
         finally:
             if hasattr(r, 'outputs'):
-                try:
-                    tests.cleanup()
-                except Exception:
-                    failed = True
-                    print('Synthetic cleanup incomplete; recover only fixture IDs in evidence.', flush=True)
-                try:
-                    r.set_mode('paused')
-                    r.infrastructure(schedule=False, notifications=False)
-                except Exception:
-                    failed = True
-                    print('Isolated pause failed; inspect validation stack.', flush=True)
+                failed = finalize(r, tests) or failed
             r.evidence.update(result='failed' if failed else 'passed', fixtureIds=[p['id'] for p in tests.plans])
             args.evidence.write_text(json.dumps(r.evidence, indent=2))
         if failed:

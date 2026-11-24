@@ -55,7 +55,7 @@ def policy():
                    'iam:PutRolePolicy', 'iam:DeleteRolePolicy'], roles)
             allow(['iam:PassRole'], roles, Condition={'StringEquals': {'iam:PassedToService': 'lambda.amazonaws.com'}})
             allow(['cloudformation:DescribeStacks', 'cloudformation:DescribeStackEvents', 'cloudformation:DescribeStackResources',
-                   'cloudformation:GetTemplate', 'cloudformation:CreateChangeSet', 'cloudformation:ExecuteChangeSet',
+                   'cloudformation:GetTemplate', 'cloudformation:GetTemplateSummary', 'cloudformation:CreateChangeSet', 'cloudformation:ExecuteChangeSet',
                    'cloudformation:DescribeChangeSet', 'cloudformation:DeleteChangeSet'],
                   [stack['StackId'], f'arn:aws:cloudformation:{region}:{account}:changeSet/awscli-cloudformation-package-deploy-*/*'])
             allow(['cloudfront:GetDistribution', 'cloudfront:GetDistributionConfig', 'cloudfront:UpdateDistribution',
