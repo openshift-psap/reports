@@ -12,6 +12,10 @@ status and recovery procedures.
 
 Agent clients can optionally use the [local stdio MCP uploader](MCP.md), which shares the CLI's upload and authentication implementation.
 
+Maintainers: the [full-stack deployment guide](_infra/FULL_STACK_DEPLOYMENT.md)
+covers the required OIDC/Secrets Manager setup, isolated validation, automatic
+backend/frontend releases, upload-mode preservation, and recovery.
+
 ## How it works
 
 1. **Report bundles live only in S3** — submitters upload an HTML bundle with a designated entry page through the protected hub or CLI.

@@ -6,10 +6,12 @@ const template = JSON.parse(fs.readFileSync('_infra/publication-stack.json', 'ut
 
 function evaluate(value, parameters) {
   if (!value || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(item => evaluate(item, parameters));
   if (value.Ref) return parameters[value.Ref];
   if (value.Condition) return evaluate(template.Conditions[value.Condition], parameters);
   if (value['Fn::Equals']) return evaluate(value['Fn::Equals'][0], parameters) === evaluate(value['Fn::Equals'][1], parameters);
   if (value['Fn::And']) return value['Fn::And'].every(item => evaluate(item, parameters));
+  if (value['Fn::Not']) return !evaluate(value['Fn::Not'][0], parameters);
   if (value['Fn::If']) {
     const [condition, yes, no] = value['Fn::If'];
     return evaluate(evaluate(template.Conditions[condition], parameters) ? yes : no, parameters);
@@ -36,4 +38,13 @@ test('API staging lookup lists only the managed upload namespace', () => {
   assert.ok(statement, 'Missing scoped staging listing permission');
   assert.deepEqual(statement.Condition, { StringLike: { 's3:prefix': ['uploads/*'] } });
   assert.deepEqual(statement.Action, ['s3:ListBucket']);
+});
+
+test('notification destinations are managed by the template across readiness updates', () => {
+  assert.equal(template.Parameters.AlarmTopicArn.Default, '');
+  for (const topic of ['', 'arn:aws:sns:us-east-1:123456789012:alerts']) {
+    for (const resource of Object.values(template.Resources).filter(r => r.Type === 'AWS::CloudWatch::Alarm')) {
+      assert.deepEqual(evaluate(resource.Properties.AlarmActions, { AlarmTopicArn: topic }), topic ? [topic] : []);
+    }
+  }
 });
