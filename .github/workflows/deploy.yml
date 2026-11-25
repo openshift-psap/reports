@@ -98,10 +98,14 @@ jobs:
           retention-days: 30
 
       # Preserve old GitHub Pages bookmarks without hosting report data there.
+      # Scope the artifact to this attempt so reruns cannot select earlier uploads.
       - name: Publish legacy Pages redirect
         uses: actions/upload-pages-artifact@v3
         with:
+          name: github-pages-${{ github.run_attempt }}
           path: legacy-pages-redirect
 
       - name: Deploy legacy Pages redirect
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
