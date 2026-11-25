@@ -176,6 +176,22 @@ test('CLI keeps a root entry and nested assets at their source paths', { skip },
   });
 });
 
+test('CLI recovery sends the existing upload ID with corrected details and the full bundle', { skip }, async () => {
+  await withMock({}, async ({ url, state }) => {
+    const bundle = makeBundle(url);
+    const source = path.join(bundle.root, 'source');
+    writeFile(source, 'fixed.html', 'corrected');
+    const result = await runCli(bundle.cli, bundle.home, [
+      source, '--entry-file', 'fixed.html', '--title', 'Corrected', '--category', 'ci', '--resume', 'pending-id',
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(state.plan.resumeId, 'pending-id');
+    assert.equal(state.plan.title, 'Corrected');
+    assert.equal(state.uploads[0].content, 'corrected');
+    assert.equal(state.completes, 1);
+  });
+});
+
 test('CLI honors an explicit nested HTML entry when the bundle has several HTML files', { skip }, async () => {
   await withMock({}, async ({ url, state }) => {
     const bundle = makeBundle(url);

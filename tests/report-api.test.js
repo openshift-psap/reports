@@ -88,6 +88,22 @@ function setup(overrides = {}, { reportId = id, listings = {}, onSend = () => un
   return { request, upload, complete, original, calls, objects };
 }
 
+test('recovery API validates files and passes the authenticated owner to the existing upload', async () => {
+  const { fixture } = require('./helpers/publication-fixture');
+  const f = fixture(), plan = await f.plan();
+  const api = setup({}, { publication: f.service });
+  const body = { ...f.submission, title: 'Corrected through API', resumeId: plan.id };
+  assert.equal((await api.upload(body, { handle: 'other' })).statusCode, 403);
+  assert.equal((await api.upload({ ...body, files: [{ name: '../escape.html', size: 1, contentType: 'text/html' }] })).statusCode, 400);
+  const response = await api.upload(body);
+  assert.equal(response.statusCode, 201);
+  assert.equal(response.data.id, plan.id);
+  assert.equal(response.data.resumeUntil, plan.resumeUntil);
+  assert.equal((await f.service.dashboard('owner')).uploads[0].submission.title, body.title);
+  const paused = setup({}, { publication: f.service, uploadMode: 'paused' });
+  assert.equal((await paused.upload(body)).statusCode, 503);
+});
+
 const metadata = { action: 'metadata', title: 'New title', category: 'benchmarks', description: 'Updated', tags: ['rhoai', 'gpu'] };
 
 test('listed legacy and hashed tokens revoke individually without using the display label', async () => {

@@ -5,6 +5,8 @@
 const crypto = require('crypto');
 const DAY = 86400000;
 const RETENTION = 7 * DAY;
+const UPLOAD_URL_TTL = 15 * 60;
+const RECOVERY_WINDOW = 6 * 60 * 60 * 1000;
 const LEASE = 120000;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const REPORT_ID = /^(legacy-)?[a-f0-9-]+$/;
@@ -92,7 +94,8 @@ function createPublication({ store, domain, now = Date.now, uuid = crypto.random
       if (parent && (parent.state !== 'COMMITTED' || parent.metadata.authenticated !== (submission.access === 'authenticated'))) fail(409, 'The current revision or visibility changed');
       const version = parent ? (Number(parent.metadata.version) || 1) + 1 : 1;
       doc.revisions[id] = { id, state: 'OPEN', parentId: parentId || null, createdAt, retainUntil: createdAt + RETENTION,
-        uploadUrlsExpireAt: createdAt + 900000, files: submission.files || [], entryFile: submission.entryFile,
+        resumeUntil: createdAt + RECOVERY_WINDOW,
+        uploadUrlsExpireAt: createdAt + UPLOAD_URL_TTL * 1000, files: submission.files || [], entryFile: submission.entryFile,
         attempts: {}, metadata: { id, reportId, version, title: submission.title, description: submission.description,
           category: submission.category, tags: submission.tags, status: submission.status, author: doc.owner,
           date: new Date(createdAt).toISOString().slice(0, 10), submittedAt: new Date(createdAt).toISOString(),
@@ -103,9 +106,45 @@ function createPublication({ store, domain, now = Date.now, uuid = crypto.random
     if (submission.externalUrl) return { report: await complete(id, owner), external: true };
     await store.checkStaging();
     const uploads = [];
-    for (const file of submission.files) uploads.push({ name: file.name, url: await store.sign(id, file, 900) });
+    for (const file of submission.files) uploads.push({ name: file.name, url: await store.sign(id, file, UPLOAD_URL_TTL) });
     return { id, uploads, expiresAt: new Date(doc.revisions[id].uploadUrlsExpireAt).toISOString(),
-      retainUntil: new Date(doc.revisions[id].retainUntil).toISOString(), pathMode: submission.pathMode };
+      retainUntil: new Date(doc.revisions[id].retainUntil).toISOString(),
+      resumeUntil: new Date(doc.revisions[id].resumeUntil).toISOString(), pathMode: submission.pathMode };
+  }
+
+  async function resume(id, submission, owner) {
+    const reportId = await locate(id);
+    if (!reportId) fail(404, 'Upload plan not found');
+    const { doc } = await change(reportId, doc => {
+      owned(doc, owner);
+      const r = doc.revisions[id];
+      if (!r) fail(404, 'Upload plan not found');
+      const deadline = r.resumeUntil || r.createdAt + RECOVERY_WINDOW;
+      const ttl = Math.min(UPLOAD_URL_TTL, Math.floor((deadline - now()) / 1000));
+      if (ttl <= 0) fail(410, 'The six-hour recovery window has ended; start a new upload');
+      if (doc.cleanupLease?.until > now() || (r.state === 'PREPARING' && now() < r.leaseUntil)) fail(409, 'Publication is busy; refresh and retry shortly');
+      if (!['OPEN', 'ABORTED', 'PREPARING'].includes(r.state) || r.cleanup?.empty) fail(409, 'Upload is no longer editable; refresh the report list');
+      if (doc.head !== r.parentId) fail(409, 'Another revision is now current');
+      if (submission.externalUrl || r.metadata.externalUrl) fail(400, 'Recovery requires uploaded files');
+      if (r.parentId && r.metadata.authenticated !== (submission.access === 'authenticated')) fail(400, 'A replacement must keep the current report visibility');
+      r.state = 'OPEN'; r.failure = null; r.activeAttempt = null; r.leaseUntil = null;
+      r.resumeUntil = deadline;
+      r.uploadUrlsExpireAt = now() + ttl * 1000;
+      r.files = submission.files; r.entryFile = submission.entryFile;
+      Object.assign(r.metadata, { title: submission.title, description: submission.description,
+        category: submission.category, tags: submission.tags, status: submission.status,
+        authenticated: submission.access === 'authenticated',
+        path: `https://${domain}/${submission.access === 'public' ? 'public' : 'private'}/v2/${reportId}/${id}/${submission.entryFile}` });
+    });
+    await store.checkStaging();
+    const r = doc.revisions[id], uploads = [];
+    for (const file of r.files) {
+      const ttl = Math.min(UPLOAD_URL_TTL, Math.floor((r.uploadUrlsExpireAt - now()) / 1000));
+      if (ttl <= 0) fail(410, 'Upload links expired while preparing; retry recovery');
+      uploads.push({ name: file.name, url: await store.sign(id, file, ttl) });
+    }
+    return { id, uploads, expiresAt: new Date(r.uploadUrlsExpireAt).toISOString(),
+      resumeUntil: new Date(r.resumeUntil).toISOString(), retainUntil: new Date(r.retainUntil).toISOString(), pathMode: submission.pathMode };
   }
 
   async function complete(id, owner) {
@@ -117,6 +156,7 @@ function createPublication({ store, domain, now = Date.now, uuid = crypto.random
       const r = doc.revisions[id];
       if (!r) fail(404, 'Upload plan not found');
       if (r.state === 'COMMITTED') return { unchanged: true };
+      if (r.resumeUntil && now() >= r.resumeUntil) fail(410, 'The six-hour submission window has ended; start a new upload');
       if (now() >= r.retainUntil) fail(410, 'Upload retention deadline passed; start a new upload');
       if (r.state === 'PREPARING' && now() < r.leaseUntil) fail(409, 'Completion is in progress; retry shortly');
       if (!['OPEN', 'PREPARING'].includes(r.state)) fail(409, 'Upload is no longer publishable; start a new upload');
@@ -131,7 +171,7 @@ function createPublication({ store, domain, now = Date.now, uuid = crypto.random
       for (const file of r.files) {
         const actual = await store.inspect(id, file.name);
         if (!actual || !actual.version || actual.version === 'null' || actual.size !== file.size || actual.contentType !== file.contentType) {
-          fail(400, `Missing or mismatched upload file: ${file.name}. Start a new upload.`);
+          fail(400, `Missing or mismatched upload file: ${file.name}. Use Edit and continue within the six-hour recovery window.`);
         }
         pinned.push({ ...file, ...actual });
       }
@@ -145,7 +185,7 @@ function createPublication({ store, domain, now = Date.now, uuid = crypto.random
       const committed = await change(reportId, doc => {
         const current = doc.revisions[id];
         if (current.state === 'COMMITTED' && current.selectedAttempt === attemptId) return { unchanged: true };
-        if (current.state !== 'PREPARING' || current.activeAttempt !== attemptId || now() >= current.leaseUntil || now() >= current.retainUntil) fail(409, 'Completion lease or retention deadline expired');
+        if (current.state !== 'PREPARING' || current.activeAttempt !== attemptId || now() >= current.leaseUntil || now() >= Math.min(current.retainUntil, current.resumeUntil || current.retainUntil)) fail(409, 'Completion lease or submission deadline expired');
         if (doc.head !== current.parentId) fail(409, 'Another revision is now current');
         current.attempts[attemptId].state = 'SELECTED';
         current.attempts[attemptId].verified = verified;
@@ -164,7 +204,7 @@ function createPublication({ store, domain, now = Date.now, uuid = crypto.random
       });
       log({ event: 'publication_failed', reportId, uploadId: id, stage: 'prepare_or_commit' });
       if (error instanceof PublicationError) throw error;
-      fail(502, 'Publication failed; files remain private. Check Incomplete uploads and start a new upload.');
+      fail(502, 'Publication failed; files remain private. Check Incomplete uploads and use Edit and continue within six hours.');
     }
   }
 
@@ -212,7 +252,11 @@ function createPublication({ store, domain, now = Date.now, uuid = crypto.random
         }
         uploads.push({ id: r.id, title: r.metadata.title, category: r.metadata.category, access: r.metadata.authenticated ? 'internal' : 'public',
           entryFile: r.entryFile, state: r.state, createdAt: r.createdAt, updatedAt: current.value.updatedAt,
-          retainUntil: r.retainUntil, uploadUrlsExpireAt: r.uploadUrlsExpireAt, failure: r.failure || null,
+          retainUntil: r.retainUntil, resumeUntil: r.resumeUntil || r.createdAt + RECOVERY_WINDOW,
+          canResume: now() < (r.resumeUntil || r.createdAt + RECOVERY_WINDOW) && ['OPEN', 'ABORTED', 'PREPARING'].includes(r.state) && !(r.state === 'PREPARING' && now() < r.leaseUntil) && current.value.head === r.parentId,
+          submission: { title: r.metadata.title, description: r.metadata.description, tags: r.metadata.tags,
+            category: r.metadata.category, access: r.metadata.authenticated ? 'authenticated' : 'public' },
+          uploadUrlsExpireAt: r.uploadUrlsExpireAt, failure: r.failure || null,
           cleanup: r.cleanup ? { failures: r.cleanup.failures, nextRetryAt: r.cleanup.nextRetryAt, verifiedAt: r.cleanup.verifiedAt } : null,
           previousPath: current.value.revisions[r.parentId]?.metadata.path || null,
           expectedFiles: r.files.length, expectedBytes: r.files.reduce((sum, file) => sum + file.size, 0),
@@ -322,6 +366,6 @@ function createPublication({ store, domain, now = Date.now, uuid = crypto.random
     log({ event: 'upload_reconciliation_page', checked: page.ids.length, failures, complete: !page.cursor });
     return { cursor: page.cursor || null, failures };
   }
-  return { plan, complete, locate, adopt, listReports, dashboard, edit, remove, reconcile, read };
+  return { plan, resume, complete, locate, adopt, listReports, dashboard, edit, remove, reconcile, read };
 }
 module.exports = { createPublication, PublicationError, controlKey, locatorKey, RETENTION, LEASE };

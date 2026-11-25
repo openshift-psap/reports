@@ -75,7 +75,7 @@ function setup(report = {}) {
     document: { getElementById: get, createElement: () => new Element(), addEventListener() {} },
     window: { location: { origin: 'https://reports.example' } },
     WORKSTREAMS: workstreams, getAllTags: () => ['rhoai', 'gpu'],
-    loadPublicEntries: async () => {}, loadPrivateEntries: async () => {},
+    loadPublicEntries: async () => {}, loadPrivateEntries: async () => {}, loadIncompleteUploads: async () => {},
     fetch: async (url, options) => {
       calls.push({ url, ...options });
       return { ok: true, json: async () => ({ external: true }) };
@@ -86,6 +86,7 @@ function setup(report = {}) {
   context.REPORTS = [{ id: 'abc123', title: 'Original', category: 'ci', tags: ['RHOAI', 'gpu'], authenticated: true, version: 2, ...report }];
   vm.runInContext(template.slice(template.indexOf('function updateReport('), template.indexOf('async function deleteReport(')), context);
   vm.runInContext(template.slice(template.indexOf('function initReportTagPicker('), template.indexOf('function renderTokenTable(')), context);
+  vm.runInContext(template.slice(template.indexOf('function resumeUpload('), template.indexOf('async function initAdmin(')), context);
   get('report-author').value = 'owner';
   get('report-update-metadata').checked = true;
   get('report-update-replacement').checked = false;
@@ -115,6 +116,37 @@ test('visible workstream choices use configured matching tags and toggle ordinar
   button.listeners.click();
   assert.deepEqual(tags(), []);
   assert.equal(get('report-workstream-reminder').hidden, false);
+});
+
+test('recovery pre-fills editable details and retries the same submission after a failed transfer', async () => {
+  const f = setup();
+  const deadline = Date.now() + 3600000;
+  f.context.resumeUpload({ id: 'pending', resumeUntil: deadline, submission: {
+    title: 'Original draft', category: 'ci', access: 'authenticated', description: 'Old', tags: ['gpu'],
+  } });
+  assert.equal(f.get('report-title').value, 'Original draft');
+  assert.equal(f.get('report-upload-btn').textContent, 'Continue submission');
+  f.get('report-title').value = 'Corrected draft';
+  f.get('report-files').files = [{ name: 'fixed.html', size: 7, type: 'text/html' }];
+  let fail = true;
+  const plans = [];
+  f.context.fetch = async (url, options) => {
+    if (url.endsWith('/reports')) {
+      plans.push(JSON.parse(options.body));
+      return { ok: true, json: async () => ({ id: 'pending', resumeUntil: new Date(deadline).toISOString(), uploads: [{ name: 'fixed.html', url: 'https://staging.example/upload' }] }) };
+    }
+    if (options.method === 'PUT') return { ok: !fail };
+    return { ok: true, json: async () => ({ report: { id: 'pending' } }) };
+  };
+  await f.submit();
+  assert.match(f.get('report-upload-status').textContent, /retry this submission/);
+  fail = false;
+  await f.submit();
+  assert.deepEqual(plans.map(p => p.resumeId), ['pending', 'pending']);
+  assert.equal(plans[1].title, 'Corrected draft');
+  assert.equal(plans[1].entryFile, 'fixed.html');
+  assert.equal(f.get('report-upload-status').textContent, 'Published.');
+  assert.equal(f.get('report-cancel-update').hidden, true);
 });
 
 test('edit preselects case-insensitive workstreams and tag removal synchronizes chips', () => {

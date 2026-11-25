@@ -63,6 +63,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path, nargs="?", help="HTML file or report directory")
     parser.add_argument("--entry-file", help="HTML entry path relative to directory")
+    parser.add_argument("--resume", help="Incomplete upload ID to edit and retry within six hours of creation")
     parser.add_argument("--title"); parser.add_argument("--category", choices=["benchmarks", "ci", "investigations", "presentations"])
     parser.add_argument("--access", choices=["public", "internal"], default="internal")
     parser.add_argument("--tags", default=""); parser.add_argument("--description", default="")
@@ -77,7 +78,7 @@ def cli_upload(args):
     token = get_token(args.login)
     if args.login and not args.source: return
     if not args.source or not args.title or not args.category: raise SystemExit("source, --title, and --category are required for upload")
-    result = upload(args.source, title=args.title, category=args.category, entry_file=args.entry_file, access=args.access, tags=args.tags, description=args.description, token=token, progress=print)
+    result = upload(args.source, title=args.title, category=args.category, entry_file=args.entry_file, access=args.access, tags=args.tags, description=args.description, token=token, progress=print, resume_id=args.resume)
     print(result["path"])
 
 def resolve_upload_path(path, name):
@@ -146,7 +147,7 @@ def snapshot_files(root, relative, directory):
         os.close(fd)
     return snapshots
 
-def upload(source, *, title, category, entry_file=None, access="internal", tags="", description="", token, progress=None):
+def upload(source, *, title, category, entry_file=None, access="internal", tags="", description="", token, progress=None, resume_id=None):
     if not title or category not in ("benchmarks", "ci", "investigations", "presentations"):
         raise ReportError("A title and supported category are required for upload")
     if access not in ("internal", "public"):
@@ -167,10 +168,14 @@ def upload(source, *, title, category, entry_file=None, access="internal", tags=
     with tempfile.TemporaryDirectory(prefix="psap-report-") as directory:
         snapshots = snapshot_files(root, relative, directory)
         payload = {"title": title, "category": category, "access": "authenticated" if access == "internal" else "public", "tags": [tag.strip() for tag in tags.split(",") if tag.strip()], "description": description, "entryFile": entry, "pathMode": "preserve", "files": [{"name": name, "size": path.stat().st_size, "contentType": mimetypes.guess_type(name)[0] or "application/octet-stream"} for name, path in snapshots.items()]}
+        if resume_id:
+            payload["resumeId"] = resume_id
         return publish_snapshot(snapshots, payload, token, progress)
 
 def publish_snapshot(snapshots, payload, token, progress):
     plan = request(f"{API}/reports", "POST", payload, token)
+    if progress and plan.get("resumeUntil"):
+        progress(f"Submission {plan['id']}: edit and retry with --resume {plan['id']} until {plan['resumeUntil']}")
     if plan.get("pathMode") != "preserve": raise ReportError("The report API did not confirm pathMode=preserve; update the report service before uploading")
     planned = [target["name"] for target in plan["uploads"]]
     if len(planned) != len(snapshots) or set(planned) != set(snapshots): raise ReportError("Upload plan does not match the source files")
@@ -179,7 +184,7 @@ def publish_snapshot(snapshots, payload, token, progress):
         try:
             urlopen(Request(target["url"], data=snapshots[target["name"]].read_bytes(), method="PUT", headers={"Content-Type": content_type, "Cache-Control": "no-cache"}), timeout=300).read()
         except Exception:
-            raise ReportError("File upload failed. Check local file readability and network access; retry with a fresh upload plan.") from None
+            raise ReportError(f"File upload failed. Check local files and connectivity, then retry with --resume {plan['id']} within the original six-hour window.") from None
         if progress: progress(f"Uploaded {target['name']}")
     try:
         result = request(f"{API}/reports/{plan['id']}/complete", "POST", {}, token)

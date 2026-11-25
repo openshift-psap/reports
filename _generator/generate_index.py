@@ -219,7 +219,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
     </form>
     <section id="incomplete-uploads" hidden style="margin:1.5rem 0">
       <h2>Incomplete uploads</h2>
-      <p>Only your uploads are shown. Upload links expire 15 minutes after the upload is created. Incomplete files stay private for seven days; this does not extend the upload links. Finalized reports do not expire.</p>
+      <p>Only your uploads are shown. You have six hours from submission creation to edit report details, re-upload files, and finish publishing. Use Edit and continue to get fresh upload links if a transfer fails or a link expires. Individual links last up to 15 minutes. Incomplete files stay private for seven days; retention does not extend the six-hour submission window. Finalized reports do not expire.</p>
       <button type="button" onclick="loadIncompleteUploads(false)">Refresh uploads</button>
       <label>Status <select id="upload-state-filter" onchange="renderIncompleteUploads()">
         <option value="">All loaded uploads</option><option value="OPEN">Awaiting files</option>
@@ -572,6 +572,7 @@ async function showVersionHistory(reportId, access, title) {
 }
 
 function updateReport(id) {
+  resumingUpload = null;
   const report = REPORTS.find(item => item.id === id); if (!report) return;
   updatingReport = report;
   document.getElementById("report-title").value = report.title;
@@ -648,7 +649,7 @@ function renderIncompleteUploads() {
     const info = document.createElement("p");
     const deadline = new Date(upload.retainUntil);
     const left = Math.max(0, Math.ceil((upload.retainUntil - Date.now()) / 3600000));
-    info.textContent = `${upload.id} · ${upload.access} · ${upload.category} · ${upload.state}. Entry: ${upload.entryFile || "external link"}. Created: ${new Date(upload.createdAt).toLocaleString()}. Retained until ${deadline.toLocaleString()} (${left} hours remaining). Upload URLs ${Date.now() >= upload.uploadUrlsExpireAt ? "expired" : "expire"} at ${new Date(upload.uploadUrlsExpireAt).toLocaleString()}.`;
+    info.textContent = `${upload.id} · ${upload.access} · ${upload.category} · ${upload.state}. Entry: ${upload.entryFile || "external link"}. Created: ${new Date(upload.createdAt).toLocaleString()}. Edit and publish by ${new Date(upload.resumeUntil).toLocaleString()}. Retained until ${deadline.toLocaleString()} (${left} hours remaining). Upload links expire no later than ${new Date(upload.uploadUrlsExpireAt).toLocaleString()}.`;
     card.appendChild(info);
     const progress = document.createElement("p");
     progress.textContent = `Expected: ${upload.expectedFiles} files / ${upload.expectedBytes} bytes. Observed: ${upload.observedFiles === null ? "Unknown — inspect to refresh" : `${upload.observedFiles} files / ${upload.observedBytes} bytes`}.`;
@@ -673,9 +674,31 @@ function renderIncompleteUploads() {
     if (upload.previousPath && upload.previousPath.startsWith("https://")) {
       const previous = document.createElement("a"); previous.href = upload.previousPath; previous.textContent = " Previous committed revision"; card.appendChild(previous);
     }
-    const help = document.createElement("p"); help.textContent = "Expired upload URLs or failed validation require a fresh upload. Retention does not renew URLs or make uploads resumable."; card.appendChild(help);
+    if (upload.canResume && Date.now() < upload.resumeUntil && upload.expectedFiles === 1) {
+      const resume = document.createElement("button"); resume.type = "button"; resume.textContent = "Edit and continue";
+      resume.addEventListener("click", () => resumeUpload(upload)); card.appendChild(resume);
+    }
+    const help = document.createElement("p");
+    help.textContent = upload.canResume ? "Edit and continue lets you correct report details and reselect the HTML file. For multi-file bundles, rerun the CLI with --resume " + upload.id + ". Retrying does not extend the six-hour deadline." : "Recovery is unavailable while publishing, after the six-hour deadline, or after a newer revision is published. Refresh to check the current state.";
+    card.appendChild(help);
     list.appendChild(card);
   }
+}
+
+function resumeUpload(upload) {
+  resetReportForm();
+  resumingUpload = upload;
+  const details = upload.submission;
+  document.getElementById("report-title").value = details.title;
+  document.getElementById("report-description").value = details.description || "";
+  document.getElementById("report-category").value = details.category;
+  document.getElementById("report-access").value = details.access;
+  document.getElementById("report-source").value = "upload";
+  document.getElementById("report-files").value = "";
+  window.setReportTags(details.tags || []);
+  syncReportUpdateMode();
+  document.getElementById("report-upload-status").textContent = `Reselect the HTML file, correct the report details, and publish by ${new Date(upload.resumeUntil).toLocaleString()}.`;
+  document.getElementById("report-upload-form").scrollIntoView({ behavior: "smooth" });
 }
 
 async function initAdmin() {
@@ -837,19 +860,21 @@ function initReportTagPicker() {
   renderSelected();
 }
 
+let resumingUpload = null;
+
 function syncReportUpdateMode() {
   const metadataOnly = !!updatingReport && document.getElementById("report-update-metadata").checked;
   const external = document.getElementById("report-source").value === "external";
   document.getElementById("report-update-mode-label").hidden = !updatingReport;
-  document.getElementById("report-cancel-update").hidden = !updatingReport;
-  document.getElementById("report-source").disabled = metadataOnly;
+  document.getElementById("report-cancel-update").hidden = !updatingReport && !resumingUpload;
+  document.getElementById("report-source").disabled = metadataOnly || !!resumingUpload;
   // Visibility changes need a storage migration, not a metadata edit or revision.
-  document.getElementById("report-access").disabled = !!updatingReport;
+  document.getElementById("report-access").disabled = !!updatingReport || !!resumingUpload?.previousPath;
   document.getElementById("report-file-label").hidden = metadataOnly || external;
   document.getElementById("report-external-url").hidden = metadataOnly || !external;
   document.getElementById("report-files").disabled = metadataOnly || external;
   document.getElementById("report-external-url").disabled = metadataOnly || !external;
-  document.getElementById("report-upload-btn").textContent = metadataOnly ? "Save report info" : updatingReport ? `Publish revision ${Number(updatingReport.version || 1) + 1}` : "Upload report";
+  document.getElementById("report-upload-btn").textContent = resumingUpload ? "Continue submission" : metadataOnly ? "Save report info" : updatingReport ? `Publish revision ${Number(updatingReport.version || 1) + 1}` : "Upload report";
 }
 
 function resetReportForm() {
@@ -858,6 +883,7 @@ function resetReportForm() {
   document.getElementById("report-author").value = author;
   window.setReportTags([]);
   updatingReport = null;
+  resumingUpload = null;
   syncReportUpdateMode();
 }
 
@@ -895,6 +921,7 @@ function initReportUpload() {
       entryFile: files[0] && files[0].name,
       externalUrl,
       parentId: updatingReport ? updatingReport.id : undefined,
+      resumeId: resumingUpload ? resumingUpload.id : undefined,
       files: files.map(({ name, size, contentType }) => ({ name, size, contentType })),
     };
     button.disabled = true;
@@ -918,6 +945,11 @@ function initReportUpload() {
       const plan = await planResponse.json();
       if (!planResponse.ok) throw new Error(plan.error || "Could not prepare upload");
       if (plan.external) { status.textContent = "Published."; resetReportForm(); await loadPublicEntries(); await loadPrivateEntries(); return; }
+      if (plan.resumeUntil) {
+        resumingUpload = { id: plan.id, resumeUntil: Date.parse(plan.resumeUntil), previousPath: updatingReport ? "replacement" : resumingUpload?.previousPath };
+        updatingReport = null;
+        syncReportUpdateMode();
+      }
       const byName = new Map(files.map(item => [item.name, item.file]));
       let uploaded = 0;
       for (const target of plan.uploads) {
@@ -933,8 +965,9 @@ function initReportUpload() {
       status.textContent = "Published.";
       resetReportForm();
       await loadPublicEntries(); await loadPrivateEntries();
+      await loadIncompleteUploads();
     } catch (error) {
-      status.textContent = error.message || "Upload failed.";
+      status.textContent = (error.message || "Upload failed.") + (resumingUpload ? ` You can correct the details or file and retry this submission until ${new Date(resumingUpload.resumeUntil).toLocaleString()}.` : "");
     } finally { button.disabled = false; }
   });
 }
