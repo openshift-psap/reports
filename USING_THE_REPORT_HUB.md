@@ -61,13 +61,21 @@ Unknown means progress has not been checked or could not be read.
 
 Incomplete uploads are retained for seven days from creation, then automatically
 cleaned up, targeting verified cleanup within 30 minutes after the deadline with
-healthy dependencies and sufficient scan capacity. Upload URLs expire after 15 minutes; retention does not renew them or
-make uploads resumable. Failed validation or expired URLs require a fresh upload.
+healthy dependencies and sufficient scan capacity. New submissions have a fixed
+**six-hour edit and publication window** from creation. Select **Edit and continue**
+to correct the report details, reselect the HTML file, and retry the same submission.
+Each retry issues fresh upload links valid for up to 15 minutes (or the remaining
+submission window, if shorter). Signing credentials can expire sooner; retrying
+obtains fresh links without extending the six-hour deadline. For multi-file bundles,
+rerun the CLI with `--resume <upload-id>` and the full corrected bundle and details.
+Replacement revisions keep the existing report's visibility. After six hours,
+start a new submission; seven-day retention is for private cleanup, not recovery.
 After a completion timeout, refresh the hub before uploading again: publication
 may have succeeded. Finalized reports have no automatic expiry.
 
 Completion can still succeed after PUT URL expiry if every file already arrived
-and the seven-day completion deadline has not passed. See the
+and the six-hour submission deadline has not passed. Uploads created before this
+recovery feature retain their original completion deadline. See the
 [rollout and recovery guide](_infra/REPORT_PUBLICATION_ROLLOUT.md).
 
 ### CLI upload for multi-file reports and local automation

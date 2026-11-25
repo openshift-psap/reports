@@ -433,6 +433,11 @@ async function handle(event) {
     const submission = validateSubmission(parseBody(event.body));
     if (submission.error) return response(400, { error: submission.error }, origin);
     if (lifecycle() && process.env.REPORT_UPLOAD_MODE !== 'v2') return response(503, { error: 'New uploads are paused for publication rollout' }, origin);
+    const resumeId = safeString(parseBody(event.body).resumeId, 64);
+    if (resumeId) {
+      if (!lifecycle()) return response(409, { error: 'Upload recovery requires publication V2' }, origin);
+      return response(201, await lifecycle().resume(resumeId, submission, authenticated.githubHandle), origin);
+    }
     const parentId = safeString(parseBody(event.body).parentId, 64);
     let parent;
     if (parentId) {

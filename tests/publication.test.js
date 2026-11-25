@@ -146,10 +146,11 @@ test('dashboard is owner-only, counts unknown on failure, and separates authoriz
   assert.equal(detail.observedFiles, 0);
   assert.equal(detail.missing.length, 2);
   assert.equal(detail.retainUntil - detail.createdAt, RETENTION);
-  assert.equal(detail.uploadUrlsExpireAt - detail.createdAt, 900000);
+  assert.equal(detail.uploadUrlsExpireAt - detail.createdAt, 15 * 60 * 1000);
+  assert.equal(Date.parse(plan.expiresAt), detail.uploadUrlsExpireAt);
   f.hooks.inspect = () => { throw new Error('unavailable'); };
   assert.equal((await f.service.dashboard('owner', null, plan.id)).uploads[0].observedFiles, null);
-  f.hooks.inspect = null; f.fill(plan.id); f.advance(900001);
+  f.hooks.inspect = null; f.fill(plan.id); f.advance(15 * 60 * 1000 + 1);
   await f.service.complete(plan.id, 'owner'); // completed bytes outlive URL authorization
 });
 

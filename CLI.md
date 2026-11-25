@@ -19,15 +19,22 @@ Incomplete uploads remain inaccessible to report viewers, including for public
 reports. They are retained for seven days from creation, then automatically
 cleaned up. Cleanup targets verification within 30 minutes of that deadline with
 healthy dependencies and sufficient scan capacity; it is not instantaneous.
-Finalized reports do not automatically expire. PUT URLs still expire after
-15 minutes. Retention does not provide CLI resume or URL renewal.
+Finalized reports do not automatically expire. PUT URLs last up to 15 minutes;
+signing credentials may expire sooner. New submissions can be corrected and
+published for **six hours from creation**, independently of individual URL expiry.
+Rerun the command with `--resume <upload-id>`, the full corrected bundle, and the
+desired title, category, description, tags, and access to retry the same submission
+with fresh links. The CLI prints the upload ID and deadline when preparing a plan;
+the hub also lists them under **Incomplete uploads**. Retries do not extend the
+deadline. Replacement revisions must retain their original visibility.
 
 Inspect interrupted uploads in the hub's **Incomplete uploads** section while
 signed in with the same GitHub account. After a completion timeout, check the hub
 before starting another upload because the server may have published it already.
-Failed validation or an unfinished transfer with expired upload URLs requires a
-fresh upload. If every file arrived before URL expiry, the server can still
-complete publication within the seven-day retention window. See the
+Failed validation or expired upload URLs can be repaired with `--resume` within
+six hours. This re-uploads the entire supplied bundle, not just missing bytes.
+After the deadline, start a new submission. If every file arrived before URL
+expiry, completion still works within the submission window. See the
 [rollout and recovery guide](_infra/REPORT_PUBLICATION_ROLLOUT.md).
 
 ## Agent upload approval
@@ -380,8 +387,9 @@ The service enforces these limits:
 | Files per report | 100 maximum, at least 1 |
 | Total bundle size | 100 MB maximum |
 | Individual file size | 100 MB maximum |
-| Upload URL lifetime | 15 minutes from upload-plan creation |
-| Incomplete upload retention / completion deadline | Seven days from upload-plan creation; does not renew PUT URLs |
+| Upload URL lifetime | Up to 15 minutes per plan/retry, capped by the remaining submission window |
+| Edit and completion deadline | Six hours from initial submission creation; retries do not extend it |
+| Incomplete upload retention | Seven days from creation; does not extend recovery or completion |
 | Entry page | One designated entry file, which must be one of the uploaded files and may be nested |
 | Tags | 20 kept, 40 characters each |
 | Title | 180 characters |
@@ -389,8 +397,8 @@ The service enforces these limits:
 
 The CLI does not pre-check file count or total size. A large or slow upload can
 outlive its upload URLs, causing remaining PUTs to fail. URL expiry alone does not
-prevent completion if all files already arrived; the completion deadline is seven
-days. Re-run the command for an unfinished transfer to obtain a fresh plan, but
+prevent completion if all files already arrived; new submissions have a six-hour
+completion deadline. Re-run with `--resume <upload-id>` for fresh links, but
 check the hub first if the previous run may have completed. A completion timeout
 does not prove publication failed.
 

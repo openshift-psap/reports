@@ -69,6 +69,13 @@ The full report index is baked into `index.html` as a JSON array. All filtering,
 
 Legacy submissions use unique `public/<category>/...` or `private/<category>/...` object prefixes. V2 uses private staging and gated `/public/v2/...` or `/private/v2/...` viewer paths backed by a conditional S3 control document. Upload URLs are valid for 15 minutes; the existing API allows at most 100 files and 100 MiB total and requires a designated HTML entry file among them. The browser accepts one HTML file; the CLI preserves nested entry and asset paths. V2 incomplete uploads are retained for seven days and then cleaned up automatically; finalized reports have no automatic expiry. Owners can delete their reports in the hub; see [Delete a report](USING_THE_REPORT_HUB.md#delete-a-report). Archiving keeps the files.
 
+Owners have six hours from creation to correct a new submission's files and details
+and finish publishing. Use **Edit and continue** in the hub for a single HTML file,
+or rerun the CLI with `--resume <upload-id>` and the full corrected bundle. Retries
+issue fresh links (up to 15 minutes, capped by the remaining window); signing
+credentials can shorten their lifetime. Seven-day retention does not extend the
+submission deadline. See [Incomplete uploads](USING_THE_REPORT_HUB.md).
+
 ### Report format: HTML only
 
 The generator is format-agnostic — it indexes `meta.json` and links to whatever HTML is on S3. Whether that HTML comes from raw authoring, quarto render, MDX compilation, or Allure output doesn't matter to the indexing layer. A discussion about supporting quarto/MDX as a build step is deferred — see Slack thread from 2026-08-19 (michey's 3-topic decomposition).

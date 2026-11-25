@@ -12,10 +12,13 @@ bundle, including assets. Its arguments and success result are unchanged.
 
 Incomplete uploads are retained for seven days from creation and then cleaned up
 automatically. Cleanup targets verification within 30 minutes after that deadline
-with healthy dependencies and sufficient scan capacity. PUT URLs expire after
-15 minutes; retention does not renew them or provide resume support. If every file
-already arrived, server-side completion remains possible until the seven-day
-deadline. Finalized reports have no automatic expiry.
+with healthy dependencies and sufficient scan capacity. PUT URLs last up to
+15 minutes; new submissions have a six-hour edit and publication window.
+If an MCP upload fails, use the hub's **Edit and continue** for single HTML files,
+or the CLI's `--resume <upload-id>` with the corrected full bundle and details.
+The MCP tool itself does not accept a resume ID. If every file already arrived,
+server-side completion remains possible until the six-hour deadline.
+Finalized reports have no automatic expiry.
 
 Inspect progress in the hub's **Incomplete uploads** section while signed in with
 the same GitHub account. A timeout may occur after successful publication, so check

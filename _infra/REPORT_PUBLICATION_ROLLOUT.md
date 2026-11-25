@@ -38,10 +38,15 @@ On code redeploys, omitting `REPORT_UPLOAD_MODE` preserves the deployed value;
 new functions or configurations with no prior value default to `paused`. An
 explicit value overrides that default. Mode lookup failures stop deployment.
 
-CLI/MCP request and success formats remain compatible. PUT URLs last 15 minutes;
-retention and completion deadline last seven days from creation. Completion can
-succeed after PUT authorization expires if every file already exists. Missing or
-mismatched files fail publication and require a fresh plan. SHA-256 verifies the
+CLI/MCP request and success formats remain compatible. PUT URLs last up to 15 minutes;
+new submissions have a six-hour edit/completion deadline and seven-day retention.
+Completion can succeed after PUT authorization expires if every file already exists.
+Missing or mismatched files fail publication but can be repaired within six hours.
+An authenticated owner can POST a validated submission with `resumeId` to `/reports`
+to update its details and file manifest and obtain fresh links for the same ID.
+Recovery rejects active publication, committed reports, stale replacements, and
+expired deadlines. Pre-feature uploads retain their original completion deadline.
+Deploy the API before the updated hub and CLI. SHA-256 verifies the
 pinned source against its destination, not a client's original local bytes when
 no client checksum was supplied. Nested paths remain intact.
 
@@ -50,7 +55,10 @@ returns the same result. Failed uploads remain private until the seven-day
 retention deadline. Successful publication allows prompt staging cleanup.
 Selected finalized report copies have **no automatic expiry**.
 
-The read-only dashboard does not renew URLs, resume uploads, or preview staging.
+Dashboard GETs remain read-only and never preview staging. **Edit and continue**
+opens the existing upload form for single HTML files; bundle recovery uses CLI
+`--resume`. Both require all files to be reselected and re-uploaded, and neither
+extends the original six-hour deadline.
 Summary pages avoid HEAD requests for every file. **Inspect file progress** checks
 one upload; failed S3 observations display Unknown. Empty pages may still have a
 continuation cursor. Cursors are signed and bound to the GitHub owner.
