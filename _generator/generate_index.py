@@ -219,7 +219,7 @@ footer{text-align:center;padding:1.5rem 0;font-size:0.75rem;color:#888;border-to
     </form>
     <section id="incomplete-uploads" hidden style="margin:1.5rem 0">
       <h2>Incomplete uploads</h2>
-      <p>Only your uploads are shown. Incomplete files stay private for seven days. Upload links expire sooner; finalized reports do not expire.</p>
+      <p>Only your uploads are shown. Upload links expire 15 minutes after the upload is created. Incomplete files stay private for seven days; this does not extend the upload links. Finalized reports do not expire.</p>
       <button type="button" onclick="loadIncompleteUploads(false)">Refresh uploads</button>
       <label>Status <select id="upload-state-filter" onchange="renderIncompleteUploads()">
         <option value="">All loaded uploads</option><option value="OPEN">Awaiting files</option>
